@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, nativeImage, session, shell, systemPreferences } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const { log, dir: logDir } = require('./log');
@@ -17,6 +17,46 @@ try {
 
 let win = null;
 let selectedId = null;
+let tray = null;
+let quitting = false;
+
+// Uma instância só: abrir o atalho de novo traz de volta a janela escondida na bandeja.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => showWindow());
+
+const WIDTH = 520;
+const HEIGHT = 720;
+
+function showWindow() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  else win.show();
+  win.focus();
+}
+
+// Fechar (X) esconde na bandeja e a transmissão continua; "Fechar" no menu da bandeja sai de verdade.
+// Minimizar é o normal do sistema (fica na barra de tarefas).
+function hideToTray() {
+  win.hide();
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.setToolTip('laele viewer');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Abrir laele viewer', click: showWindow },
+      { label: 'Abrir logs', click: () => shell.openPath(logDir) },
+      { type: 'separator' },
+      { label: 'Fechar', click: () => app.quit() },
+    ])
+  );
+  tray.on('click', showWindow);
+}
+
+app.on('before-quit', () => (quitting = true));
+app.on('activate', () => showWindow()); // Mac: clique no ícone do Dock
 
 ipcMain.handle('list-sources', async () =>
   (await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } })).map((s) => ({
@@ -130,8 +170,8 @@ app.whenReady().then(() => {
   });
 
   win = new BrowserWindow({
-    width: 520,
-    height: 720,
+    width: WIDTH,
+    height: HEIGHT,
     // Tamanho fixo: sem redimensionar, maximizar ou tela cheia (F11 incluso).
     resizable: false,
     maximizable: false,
@@ -143,6 +183,12 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
   });
   win.loadFile('index.html');
+  createTray();
+  win.on('close', (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    hideToTray();
+  });
 
   // Erros e avisos do console da página também vão para o log.
   win.webContents.on('console-message', ({ level, message }) => {
@@ -152,8 +198,8 @@ app.whenReady().then(() => {
   win.webContents.on('render-process-gone', (_, details) => log('erro', 'a página travou/fechou:', details));
 });
 
-app.on('window-all-closed', () => {
+// A janela só fecha de verdade ao sair pelo menu da bandeja (app.quit não emite window-all-closed).
+app.on('will-quit', () => {
   if (capturing) capture.stop();
   log('info', 'app fechado');
-  app.quit();
 });

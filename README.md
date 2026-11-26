@@ -52,7 +52,7 @@ Quando passa de 1 MB, o arquivo atual vira `laele-viewer.old.log` e começa um n
 Ao enviar uma tag de versão, o GitHub Actions gera os instaladores dos três sistemas e anexa à Release (`.github/workflows/instaladores.yml`):
 
 ```powershell
-git tag v1.1.0; git push origin v1.1.0
+git tag v1.2.0; git push origin v1.2.0
 ```
 Para gerar só o do seu sistema: `cd broadcaster; npm i; npm run dist` (sai em `broadcaster/dist/`). Para rodar sem instalar: `npm start`.
 

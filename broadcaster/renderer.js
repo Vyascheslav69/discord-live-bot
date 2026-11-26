@@ -48,6 +48,12 @@ function showApp() {
   app.hidden = false;
   loadSources();
   loadDestinations();
+  // Mac: sem a permissão "Gravação de Tela" as telas aparecem pretas e nada é capturado.
+  window.capture.screenAccess().then((status) => {
+    if (status === 'denied' || status === 'restricted') {
+      setState('error', 'Libere o laele viewer em Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela e abra o app de novo.');
+    }
+  });
 }
 
 setupForm.onsubmit = (e) => {
@@ -61,6 +67,10 @@ setupForm.onsubmit = (e) => {
 };
 
 $('edit').onclick = () => showSetup();
+$('logs').onclick = () => window.capture.openLogs();
+
+// Vai para o arquivo de log (erros do console da página já são registrados pelo processo principal).
+const log = (level, ...parts) => window.capture.log(level, parts.join(' '));
 
 /* ---------- onde o bot avisa (servidor e call) ---------- */
 
@@ -211,6 +221,7 @@ renderQuality();
 /* ---------- estado ---------- */
 
 function setState(state, text) {
+  if (state !== app.dataset.state || state === 'error') log(state === 'error' ? 'erro' : 'info', `${state}: ${text}`);
   app.dataset.state = state;
   statusEl.textContent = text;
   const busy = state === 'connecting' || state === 'live';
@@ -342,7 +353,8 @@ async function start() {
   setState('connecting', 'Conectando ao servidor…');
   try {
     ws = await connect(server, name, password);
-    ws.onclose = () => {
+    ws.onclose = (e) => {
+      if (ws) log('erro', `conexão com o servidor caiu (código ${e.code}${e.reason ? `, ${e.reason}` : ''})`);
       if (!ws) return;
       stop();
       setState('error', `A conexão com o servidor caiu. Ele ainda está ligado em ${server}?`);
@@ -372,29 +384,34 @@ async function start() {
     const videoConfig = await pickVideoConfig(width, height, res, wantedFps);
     const fps = videoConfig.framerate;
     const keyframeEvery = fps * 2; // quem entra no meio espera no máximo 2 s
+    log('info', `transmitindo para ${server}: tela ${cw}x${ch} -> ${width}x${height} ${fps} fps, ${videoConfig.codec}, ${videoConfig.bitrate / 1e6} Mbps`);
     videoEncoder = new VideoEncoder({
       output: (chunk) => sendChunk(chunk.type === 'key' ? VIDEO_KEY : VIDEO_DELTA, chunk),
       error: (e) => fail(`erro no vídeo: ${e.message}`),
     });
     videoEncoder.configure(videoConfig);
 
-    audioEncoder = new AudioEncoder({
-      output: (chunk) => sendChunk(AUDIO, chunk),
-      error: (e) => fail(`erro no áudio: ${e.message}`),
-    });
-    const audioConfig = { codec: 'opus', sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 };
-    audioEncoder.configure(audioConfig);
+    // No Mac não há captura de som: a transmissão vai só com vídeo (a config sai sem "audio").
+    const { audio: hasAudio, discordFound } = await window.capture.startAudio();
+    let audioConfig;
+    if (hasAudio) {
+      audioEncoder = new AudioEncoder({
+        output: (chunk) => sendChunk(AUDIO, chunk),
+        error: (e) => fail(`erro no áudio: ${e.message}`),
+      });
+      audioConfig = { codec: 'opus', sampleRate: 48000, numberOfChannels: 2, bitrate: 128_000 };
+      audioEncoder.configure(audioConfig);
+    }
 
     ws.send(JSON.stringify({ type: 'config', video: { codec: videoConfig.codec }, audio: audioConfig }));
 
-    const { discordFound } = await window.capture.startAudio();
     audioQueue = [];
     audioTime = 0;
     const start = performance.now();
     let frameNo = 0;
 
     pump = setInterval(() => {
-      pumpAudio(start);
+      if (audioEncoder) pumpAudio(start);
       if (!lastFrame) return;
       // Codificador atrasado: pula este quadro em vez de acumular fila.
       if (videoEncoder.encodeQueueSize > 2) return;
@@ -408,10 +425,12 @@ async function start() {
 
     const parts = [`Ao vivo em ${height}p ${fps} fps.`];
     if (fps < wantedFps) parts.push('Este PC não aguenta 60 fps, então ficou em 30.');
+    if (!hasAudio) parts.push('Sem som: no Mac vai só o vídeo.');
     if (discordFound) parts.push('O som do Discord fica fora da transmissão.');
     setState('live', parts.join(' '));
   } catch (err) {
     const msg = err.message;
+    log('erro', 'falha ao iniciar a transmissão:', err.stack ?? msg);
     stop();
     if (msg === 'senha') return showSetup('Senha errada. Confira com quem cuida do servidor.');
     if (msg === 'nome') return setState('error', `Já tem alguém transmitindo como ${name}. Troque seu nome em "Alterar nome, endereço ou senha".`);

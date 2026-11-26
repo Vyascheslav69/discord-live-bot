@@ -1,0 +1,60 @@
+# Gera os instaladores do laele viewer (Windows, Mac e Linux) e anexa à Release.
+# Dispara ao enviar uma tag "v*" (ex.: git tag v1.1.0 && git push origin v1.1.0).
+name: Instaladores
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cria a Release (se ainda não existir)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "laele viewer ${TAG#v}" --notes "$(cat <<'EOF'
+          Baixe o instalador do seu sistema:
+
+          - **Windows**: `laele-viewer-setup-<versão>.exe`. Se aparecer "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo**.
+          - **Mac** (só vídeo, sem som): `…-mac-arm64.dmg` para Mac com chip Apple (M1 ou mais novo) ou `…-mac-x64.dmg` para Mac Intel. Arraste para Aplicativos. Na primeira vez, clique com o botão direito no app → **Abrir** (o app não tem assinatura da Apple) e libere **Gravação de Tela** em Ajustes do Sistema → Privacidade e Segurança.
+          - **Linux**: `…-linux-x64.AppImage`. Dê permissão de execução (`chmod +x`) e abra. Se não abrir, instale `libfuse2`.
+
+          Na primeira vez, preencha seu nome, o endereço do servidor e a senha que o dono do servidor passar.
+          EOF
+          )"
+
+  build:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: broadcaster
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: broadcaster/package-lock.json
+      - run: npm ci
+      - run: npm run dist
+      - name: Anexa o instalador à Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          files=(dist/*.exe dist/*.dmg dist/*.AppImage)
+          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber

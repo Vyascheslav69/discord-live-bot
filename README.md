@@ -18,23 +18,43 @@
 
 ## Instalar o laele viewer (quem vai transmitir)
 
-1. Baixe `laele-viewer-setup-<versão>.exe` em **Releases** do repositório.
-2. Abra o arquivo. Ele instala sozinho e cria um atalho na área de trabalho. Não precisa de Node nem de mais nada.
-   - O Windows pode mostrar "O Windows protegeu o computador", porque o app não tem assinatura digital paga. Clique em **Mais informações → Executar assim mesmo**.
+| Sistema | Vídeo | Som do PC (sem o Discord) | Arquivo em **Releases** |
+|---|---|---|---|
+| Windows 10/11 | ✅ | ✅ | `laele-viewer-setup-<versão>.exe` |
+| Linux (x64, PipeWire) | ✅ | ✅ | `laele-viewer-<versão>-linux-x64.AppImage` |
+| Mac | ✅ | ❌ só vídeo | `…-mac-arm64.dmg` (chip Apple) ou `…-mac-x64.dmg` (Intel) |
+
+1. Baixe o arquivo do seu sistema em **Releases** do repositório.
+2. Instale. Não precisa de Node nem de mais nada.
+   - **Windows**: abra o `.exe`, que instala sozinho e cria um atalho na área de trabalho. Se aparecer "O Windows protegeu o computador" (o app não tem assinatura digital paga), clique em **Mais informações → Executar assim mesmo**.
+   - **Mac**: abra o `.dmg` e arraste o app para Aplicativos. Na primeira vez, clique com o botão direito no app → **Abrir** (o app não tem assinatura da Apple). Depois libere em Ajustes do Sistema → Privacidade e Segurança → **Gravação de Tela** e abra o app de novo.
+   - **Linux**: `chmod +x laele-viewer-*.AppImage` e abra. Se não abrir, instale `libfuse2`. No Wayland, quem escolhe a tela é o seletor do sistema. Sem codificador H.264, o app usa VP8, que pesa mais no processador em 1080p60.
 3. Na primeira vez, preencha:
    - **Seu nome**: é o que aparece na atividade.
    - **Endereço do servidor**: no PC do servidor, `http://localhost:5173`. Nos outros, o endereço do túnel que o dono do servidor passar.
    - **Senha**: a de `SENHA-TRANSMISSOR.txt`, que o dono do servidor passa.
 4. Escolha a tela ou janela e a qualidade e clique em **Transmitir**. No canto superior direito aparecem o servidor e a call onde o bot vai avisar. Clique ali para trocar.
 
-Para trocar nome, endereço ou senha depois, use "Alterar nome, endereço ou senha". Para desinstalar: Configurações do Windows → Aplicativos → laele viewer.
+Para trocar nome, endereço ou senha depois, use "Alterar nome, endereço ou senha".
 
-### Gerar o instalador
+### Log (para entender erros em outros computadores)
+
+O app grava tudo o que acontece num arquivo: versão e sistema, cada tentativa de transmitir, qualidade e codec escolhidos, captura de som, quedas de conexão e erros. Senhas não vão para o log. Peça para a pessoa clicar em **Abrir logs** no app e te mandar o `laele-viewer.log`:
+
+- Windows: `%APPDATA%\laele viewer\logs`
+- Mac: `~/Library/Logs/laele viewer`
+- Linux: `~/.config/laele viewer/logs`
+
+Quando passa de 1 MB, o arquivo atual vira `laele-viewer.old.log` e começa um novo.
+
+### Gerar os instaladores
+
+Ao enviar uma tag de versão, o GitHub Actions gera os instaladores dos três sistemas e anexa à Release (`.github/workflows/instaladores.yml`):
 
 ```powershell
-cd broadcaster; npm i; npm run dist
+git tag v1.1.0; git push origin v1.1.0
 ```
-O `.exe` sai em `broadcaster/dist/`. Para rodar sem instalar: `npm start`.
+Para gerar só o do seu sistema: `cd broadcaster; npm i; npm run dist` (sai em `broadcaster/dist/`). Para rodar sem instalar: `npm start`.
 
 ## Servidor (um PC fica ligado para todos)
 

@@ -65,6 +65,8 @@ function playWS(slot, id, onDrop) {
   };
 
   const setupAudio = () => {
+    audio = null;
+    if (!config.audio) return; // transmissão sem som (laele viewer no Mac)
     audio = new AudioDecoder({ output: (data) => slot.playAudio(data), error: () => {} });
     audio.configure(config.audio);
   };

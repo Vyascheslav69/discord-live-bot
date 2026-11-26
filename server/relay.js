@@ -5,10 +5,15 @@
 import { createServer } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { extname, join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import * as bot from './bot.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
+// Modo normal: só localhost (o acesso de fora passa pelo Vite e pelo túnel). Modo Pterodactyl: HOST=0.0.0.0 e STATIC_DIR.
+const HOST = process.env.HOST ?? '127.0.0.1';
+// Pasta com a atividade já compilada (activity/dist). Sem ela, quem serve a página é o Vite.
+const STATIC_DIR = process.env.STATIC_DIR;
 const PASSWORD_FILE = process.env.PASSWORD_FILE ?? new URL('../SENHA-TRANSMISSOR.txt', import.meta.url);
 const VIDEO_KEY = 0;
 const VIDEO_DELTA = 1;
@@ -18,14 +23,15 @@ const MAX_BUFFERED = 1_000_000;
 
 const sha = (s) => createHash('sha256').update(s).digest();
 // shortcut: a senha é lida uma vez ao iniciar; reinicie o relay depois de trocá-la.
-let passwordLine;
-try {
+// Variável SENHA_TRANSMISSOR (painel do Pterodactyl) ou linha 2 do arquivo.
+let passwordLine = process.env.SENHA_TRANSMISSOR?.trim();
+if (!passwordLine) try {
   passwordLine = readFileSync(PASSWORD_FILE, 'utf8').split(/\r?\n/)[1]?.trim();
 } catch {
   // arquivo ausente: cai na mensagem abaixo
 }
 if (!passwordLine) {
-  console.error('Falta a senha: copie SENHA-TRANSMISSOR.example.txt para SENHA-TRANSMISSOR.txt e escreva a senha na linha 2.');
+  console.error('Falta a senha: defina SENHA_TRANSMISSOR ou copie SENHA-TRANSMISSOR.example.txt para SENHA-TRANSMISSOR.txt e escreva a senha na linha 2.');
   process.exit(1);
 }
 const passwordHash = sha(passwordLine);
@@ -140,8 +146,31 @@ export const server = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(bot.destinations()));
   }
+  if (STATIC_DIR && req.method === 'GET') return serveStatic(req, res);
   res.writeHead(404).end();
 });
+
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+function serveStatic(req, res) {
+  const { pathname } = new URL(req.url, 'http://relay');
+  let file;
+  try {
+    file = join(STATIC_DIR, decodeURIComponent(pathname === '/' ? '/index.html' : pathname));
+  } catch {
+    return res.writeHead(400).end();
+  }
+  // join resolve "..": o que sair da pasta é recusado.
+  if (!file.startsWith(join(STATIC_DIR, '/'))) return res.writeHead(404).end();
+  let body;
+  try {
+    body = readFileSync(file);
+  } catch {
+    return res.writeHead(404).end();
+  }
+  // Arquivos em /assets têm hash no nome: podem ficar em cache.
+  const cache = pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+  res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': cache }).end(body);
+}
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
 server.on('upgrade', (req, socket, head) => {
@@ -151,5 +180,4 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => (watch ? onWatch(ws, watch[1]) : onPublish(ws)));
 });
 
-// Só localhost: o acesso de fora passa pelo proxy do Vite (e pelo túnel).
-server.listen(PORT, '127.0.0.1', () => console.log(`Relay ouvindo em 127.0.0.1:${server.address().port}`));
+server.listen(PORT, HOST, () => console.log(`Relay ouvindo em ${HOST}:${server.address().port}`));

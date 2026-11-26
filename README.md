@@ -10,7 +10,7 @@
 - `activity/` — a página que roda dentro do Discord. Mostra quem está transmitindo, troca de tela, mostra duas lado a lado, tem volume por tela e tela cheia (botão ou duplo clique).
 - `SENHA-TRANSMISSOR.txt` — a senha para transmitir (linha 2). **Não vai para o GitHub.** Num computador novo, copie `SENHA-TRANSMISSOR.example.txt` e troque a senha.
 
-**Nomes únicos**: duas pessoas não transmitem com o mesmo nome. "Júlia", "julia" e "JULIA" contam como o mesmo. Quando alguém para de transmitir, o nome fica livre na hora.
+**Nomes únicos**: duas pessoas não transmitem com o mesmo nome. "Zoë", "zoe" e "ZOE" contam como o mesmo. Quando alguém para de transmitir, o nome fica livre na hora.
 
 **Atraso**: o vídeo vai por WebSocket, que funciona dentro do Discord. O Discord bloqueia WebRTC nas atividades, e o HLS ficava com segundos de atraso. Medido pelo proxy do Discord: ~30 ms do laele viewer até a atividade, mais a captura e a decodificação. Se a rede engasga, quadros atrasados são descartados em vez de acumular atraso.
 
@@ -83,7 +83,7 @@ Para gerar só o do seu sistema: `cd broadcaster; npm i; npm run dist` (sai em `
 
 ### 3. Bot que avisa quando alguém transmite
 
-O bot manda no chat da call escolhida algo como "🔴 **Juan** começou a transmitir. Clique para assistir", com um link que abre a atividade naquela call. Quando a transmissão acaba, a mensagem muda para "parou de transmitir". O Discord não deixa bots abrirem a atividade sozinhos, por isso o link.
+O bot manda no chat da call escolhida algo como "🔴 **Ethan** começou a transmitir. Clique para assistir", com um link que abre a atividade naquela call. Quando a transmissão acaba, a mensagem muda para "parou de transmitir". O Discord não deixa bots abrirem a atividade sozinhos, por isso o link.
 
 1. No portal, em **Bot**, clique em **Reset Token** e copie o token. **Não mande para ninguém**: quem tem o token controla o bot.
 2. Copie `server/.env.example` para `server/.env` e cole o token depois de `DISCORD_BOT_TOKEN=`.
@@ -107,6 +107,30 @@ cloudflared tunnel --url http://localhost:5173
 O cloudflared mostra um endereço tipo `https://abc-def.trycloudflare.com`. **Ele muda toda vez que o túnel reinicia.** Quando isso acontecer, atualize o URL Mapping no portal e avise quem transmite de fora.
 
 Para conferir o relay: `cd server; npm test`.
+
+### Alternativa: um processo só (Pterodactyl ou outro host)
+
+`node pterodactyl.js` faz tudo sozinho. Ele instala as dependências, compila a atividade e sobe o relay já servindo a página. Também baixa o `cloudflared` (no Linux) e abre o túnel. A porta vem de `SERVER_PORT`, que o Pterodactyl define, ou de `PORT`. O jeito normal, com três terminais, continua funcionando igual.
+
+No Pterodactyl:
+
+1. Crie um servidor com o egg **Node.js** e escolha a imagem do Node 22 ou mais novo.
+2. Suba os arquivos do repositório para o servidor, ou use a opção de Git do egg (repositório privado pede um token do GitHub).
+3. Arquivo de inicialização (*Main file* / *JS file*): `pterodactyl.js`.
+4. Senha, token e ID: use as variáveis do painel, se o egg deixar criá-las. Se não deixar, use os arquivos:
+   - `SENHA_TRANSMISSOR` ou o arquivo `SENHA-TRANSMISSOR.txt`
+   - `DISCORD_BOT_TOKEN` em `server/.env`
+   - `VITE_DISCORD_CLIENT_ID` em `server/.env` ou `activity/.env`
+   - `CLOUDFLARE_TUNNEL_TOKEN` (opcional, veja abaixo) em `server/.env`
+5. Ligue o servidor. O console mostra `Endereço público: https://….trycloudflare.com`. Coloque esse host no URL Mapping do portal. No laele viewer, o endereço do servidor é esse mesmo.
+
+Sem `CLOUDFLARE_TUNNEL_TOKEN`, o endereço muda a cada reinício. Para um **endereço fixo**:
+
+1. Pegue um domínio. Um grátis serve: o [DigitalPlat FreeDomain](https://dash.domain.digitalplat.org) dá nomes como `seunome.dpdns.org`. Um domínio pago `.xyz` custa poucos reais por ano.
+2. Adicione o domínio na Cloudflare (plano grátis) e troque os nameservers dele para os que a Cloudflare indicar.
+3. Na Cloudflare, vá em **Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared** e copie o token que aparece no comando.
+4. Em **Public Hostname** do túnel, crie `live.seunome.dpdns.org` → `HTTP` → `localhost:<porta do servidor>`.
+5. Coloque o token em `CLOUDFLARE_TUNNEL_TOKEN`, reinicie o servidor e use `live.seunome.dpdns.org` no URL Mapping e no laele viewer. Ele não muda mais.
 
 ## Assistir
 

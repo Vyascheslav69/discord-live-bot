@@ -1,0 +1,4 @@
+Senha do laele viewer (passe só para quem pode transmitir):
+troque-esta-senha
+
+Copie este arquivo para SENHA-TRANSMISSOR.txt e troque a linha 2. Depois reinicie o relay (server).

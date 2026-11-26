@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; connect-src ws: wss:" />
+    <title>laele viewer</title>
+    <link rel="stylesheet" href="node_modules/@fontsource-variable/unbounded/index.css" />
+    <link rel="stylesheet" href="node_modules/@fontsource-variable/figtree/index.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <form id="setup" class="view" hidden>
+      <header>
+        <h1>laele viewer</h1>
+        <p class="hint">Escolha o nome que seus amigos vão ver na atividade. Fica salvo para as próximas vezes.</p>
+      </header>
+
+      <label class="field">
+        <span>Seu nome</span>
+        <input id="name" maxlength="32" autocomplete="off" required />
+      </label>
+
+      <label class="field">
+        <span>Endereço do servidor</span>
+        <input id="server" type="url" autocomplete="off" required />
+        <small>No PC do servidor: http://localhost:5173. Amigos: o endereço do túnel que o dono do servidor passar.</small>
+      </label>
+
+      <label class="field">
+        <span>Senha para transmitir</span>
+        <input id="password" type="password" autocomplete="off" required />
+      </label>
+
+      <p id="setup-error" class="error" role="alert"></p>
+      <button class="primary" type="submit">Salvar</button>
+    </form>
+
+    <main id="app" class="view" data-state="idle" hidden>
+      <header class="top">
+        <div class="identity">
+          <h1 id="who"></h1>
+          <p id="status" role="status">Pronto para transmitir</p>
+          <button id="edit" class="link" type="button">Alterar nome, endereço ou senha</button>
+        </div>
+        <div class="dest">
+          <span class="dest-label" id="dest-label">Bot avisa em</span>
+          <button id="dest" class="dest-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="dest-list" aria-describedby="dest-label">
+            <span class="dest-text">
+              <span class="dest-guild" id="dest-guild"></span>
+              <span class="dest-channel" id="dest-channel"></span>
+            </span>
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <div id="dest-list" class="dest-list" role="listbox" aria-label="Onde o bot avisa quando você transmite" hidden></div>
+        </div>
+      </header>
+
+      <section class="field">
+        <span id="sources-label">O que você quer mostrar</span>
+        <div id="sources" role="radiogroup" aria-labelledby="sources-label"></div>
+        <button id="refresh" class="link" type="button">Atualizar lista</button>
+      </section>
+
+      <section class="quality">
+        <span class="quality-label">Qualidade</span>
+        <div class="seg" id="res" role="radiogroup" aria-label="Resolução">
+          <button type="button" role="radio" data-value="1080">1080p</button>
+          <button type="button" role="radio" data-value="720">720p</button>
+          <button type="button" role="radio" data-value="480">480p</button>
+        </div>
+        <div class="seg" id="fps" role="radiogroup" aria-label="Quadros por segundo">
+          <button type="button" role="radio" data-value="30">30 fps</button>
+          <button type="button" role="radio" data-value="60">60 fps</button>
+        </div>
+      </section>
+
+      <button id="toggle" class="primary" type="button">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="toggle-label">Transmitir</span>
+      </button>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>

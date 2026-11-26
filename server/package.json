@@ -1,0 +1,13 @@
+{
+  "name": "relay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node relay.js",
+    "test": "node relay.test.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.28.1",
+    "ws": "^8.23.0"
+  }
+}

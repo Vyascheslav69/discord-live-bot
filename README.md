@@ -26,7 +26,7 @@
 
 1. Baixe o arquivo do seu sistema em **Releases** do repositório.
 2. Instale. Não precisa de Node nem de mais nada.
-   - **Windows**: abra o `.exe`, que instala sozinho e cria um atalho na área de trabalho. Se aparecer "O Windows protegeu o computador" (o app não tem assinatura digital paga), clique em **Mais informações → Executar assim mesmo**.
+   - **Windows**: abra o `.exe`, escolha a pasta de instalação (ou deixe a sugerida) e clique em **Instalar**. Ele cria um atalho na área de trabalho. Se aparecer "O Windows protegeu o computador" (o app não tem assinatura digital paga), clique em **Mais informações → Executar assim mesmo**.
    - **Mac**: abra o `.dmg` e arraste o app para Aplicativos. Na primeira vez, clique com o botão direito no app → **Abrir** (o app não tem assinatura da Apple). Depois libere em Ajustes do Sistema → Privacidade e Segurança → **Gravação de Tela** e abra o app de novo.
    - **Linux**: `chmod +x laele-viewer-*.AppImage` e abra. Se não abrir, instale `libfuse2`. No Wayland, quem escolhe a tela é o seletor do sistema. Sem codificador H.264, o app usa VP8, que pesa mais no processador em 1080p60.
 3. Na primeira vez, preencha:

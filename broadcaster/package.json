@@ -1,7 +1,7 @@
 {
   "name": "laele-viewer",
   "productName": "laele viewer",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Transmite sua tela para a atividade do Discord",
   "private": true,
   "main": "main.js",
@@ -30,8 +30,9 @@
       "icon": "build/icon.png"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "laele viewer",

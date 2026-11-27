@@ -4,3 +4,4 @@ dist/
 SENHA-TRANSMISSOR.txt
 bin/
 *.zip
+server/avisos-pendentes.json

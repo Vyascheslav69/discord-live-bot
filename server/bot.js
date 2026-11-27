@@ -2,6 +2,7 @@
 // Bots não conseguem abrir atividades sozinhos; o convite com target_type "embedded application" abre a atividade
 // naquela call com um clique. Sem DISCORD_BOT_TOKEN (server/.env) o relay funciona sem avisos.
 import { ChannelType, Client, GatewayIntentBits, InviteTargetType, PermissionFlagsBits, escapeMarkdown } from 'discord.js';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const NEEDED = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.CreateInstantInvite];
 
@@ -41,9 +42,43 @@ export async function member(userId) {
 }
 
 // Avisos somem do chat depois de 2 minutos (o bot apaga as próprias mensagens; não precisa de permissão extra).
-// shortcut: o timer vive no processo; se o relay reiniciar antes, a mensagem fica. Para garantir, guardar e apagar ao iniciar.
+// Os que faltam apagar ficam num arquivo: se o relay reiniciar antes dos 2 minutos, o bot apaga quando voltar.
 const NOTICE_TTL = 2 * 60_000;
-const temporary = (message) => setTimeout(() => message.delete().catch(() => {}), NOTICE_TTL);
+const PENDING_FILE = new URL('avisos-pendentes.json', import.meta.url);
+let pending = []; // { channelId, messageId, at }
+try {
+  pending = JSON.parse(readFileSync(PENDING_FILE, 'utf8'));
+} catch {
+  // sem arquivo: nada pendente
+}
+const savePending = () => {
+  try {
+    writeFileSync(PENDING_FILE, JSON.stringify(pending));
+  } catch (e) {
+    console.error(`Bot: não consegui guardar os avisos a apagar (${e.message})`);
+  }
+};
+
+function scheduleDelete(item) {
+  setTimeout(async () => {
+    try {
+      await client.channels.cache.get(item.channelId)?.messages.delete(item.messageId);
+    } catch (e) {
+      if (e.code !== 10008) console.error(`Bot: não consegui apagar um aviso (${e.message})`); // 10008: já foi apagada
+    }
+    pending = pending.filter((p) => p.messageId !== item.messageId);
+    savePending();
+  }, Math.max(0, item.at - Date.now()));
+}
+
+function temporary(message) {
+  const item = { channelId: message.channelId, messageId: message.id, at: Date.now() + NOTICE_TTL };
+  pending.push(item);
+  savePending();
+  scheduleDelete(item);
+}
+
+client?.once('clientReady', () => pending.forEach(scheduleDelete));
 
 // Manda o aviso no chat da call; devolve a mensagem (o canal é usado no aviso de fim) ou null.
 export async function announce(name, guildId, channelId) {

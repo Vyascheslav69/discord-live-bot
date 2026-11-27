@@ -244,7 +244,7 @@ function show(slot, path) {
   slot.name.textContent = path ? decodeName(path) : '';
   if (!path) {
     slot.canvas.getContext('2d').clearRect(0, 0, slot.canvas.width, slot.canvas.height);
-    slot.message.textContent = live.length ? 'Escolha alguém na barra abaixo' : '';
+    slot.message.textContent = live.length ? 'Escolha alguém na barra de cima' : '';
   } else {
     connect(slot);
   }
@@ -276,7 +276,7 @@ function renderChannels() {
   if (!live.length) {
     const p = document.createElement('p');
     p.className = 'empty';
-    p.textContent = 'Ninguém transmitindo agora. Abra o laele viewer e clique em Transmitir.';
+    p.textContent = 'Ninguém transmitindo agora.';
     document.body.classList.remove('idle'); // sem ninguém no ar a barra fica à vista
     channelsEl.replaceChildren(p);
     return;

@@ -23,6 +23,7 @@ if (client) {
 
 const canPost = (channel) => channel.permissionsFor(channel.guild.members.me)?.has(NEEDED);
 
+export const enabled = !!client; // há token (o bot pode estar conectando ou caído)
 export const ready = () => !!client?.isReady();
 export const applicationId = () => client?.application?.id;
 

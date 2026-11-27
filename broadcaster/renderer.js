@@ -91,7 +91,8 @@ setupForm.onsubmit = async (e) => {
       return showApp();
     }
     askName = false;
-    if (settings().session) return showApp(); // já vinculada (se o servidor não aceitar a sessão, ele pede de novo)
+    if (settings().session) return showApp();
+    if (!clientId) throw new Error('bot-fora'); // bot ainda conectando ou caído // já vinculada (se o servidor não aceitar a sessão, ele pede de novo)
     $('setup-error').textContent = 'Clique em "Autorizar" na janela que abriu no Discord…';
     localStorage.setItem('session', await window.capture.discordLogin(server, clientId));
     me = null;
@@ -103,6 +104,7 @@ setupForm.onsubmit = async (e) => {
       'discord-fechado': 'Abra o Discord neste PC (o app do Discord, não o site) e tente de novo.',
       'discord-admin': 'O Discord está aberto como administrador e o Windows bloqueia a conexão. Feche o Discord e abra de novo normalmente (sem "Executar como administrador").',
       recusado: 'A autorização foi recusada no Discord.',
+      'bot-fora': 'O bot do Discord está fora do ar no servidor. Tente de novo em instantes.',
     };
     $('setup-error').textContent = texts[msg] ?? `Não deu para vincular: ${msg}`;
   } finally {

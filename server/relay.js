@@ -42,7 +42,8 @@ export const checkPassword = (p) => typeof p === 'string' && timingSafeEqual(sha
 // Com DISCORD_CLIENT_SECRET (server/.env) e o bot no ar, quem transmite entra com a conta do Discord: o nome vem do
 // apelido no servidor e o aviso vai para a call em que a pessoa está. Sem isso, vale o nome digitado no laele viewer.
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
-const discordLogin = () => !!CLIENT_SECRET && bot.ready();
+// Decide pela configuração, nunca pelo bot estar conectado agora: com o bot caído o relay recusa (não aceita nome digitado).
+const discordLogin = () => !!CLIENT_SECRET && bot.enabled;
 
 // Sessão = id do Discord assinado: nada fica guardado e ela continua valendo depois de reiniciar o relay.
 const sessionKey = CLIENT_SECRET ? sha(`laele-sessao:${CLIENT_SECRET}`) : null;
@@ -65,7 +66,7 @@ function publicOrigin(req) {
 // O laele viewer pede a autorização ao Discord aberto no PC (RPC local) e manda aqui o código; o relay confirma com
 // o Discord quem autorizou e devolve a sessão. Só quem clicou em "Autorizar" no próprio Discord recebe a sessão.
 async function onDiscordCode(req, res) {
-  if (!discordLogin()) return res.writeHead(503).end();
+  if (!discordLogin() || !bot.ready()) return res.writeHead(503).end();
   let body = '';
   for await (const chunk of req) if ((body += chunk).length > 4096) return res.writeHead(413).end();
   const code = (() => { try { return JSON.parse(body).code; } catch { return null; } })();

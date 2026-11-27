@@ -17,7 +17,7 @@ html, body { margin: 0; height: 100%; background: var(--black); color: var(--lil
 
 body {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   font: 15px/1.5 'Figtree Variable', system-ui, sans-serif;
 }
 
@@ -29,7 +29,7 @@ button { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: 1fr 0fr;
   gap: 0;
-  padding: 12px 12px 0;
+  padding: 12px;
   min-height: 0;
   transition: grid-template-columns 0.5s var(--ease), gap 0.5s var(--ease);
 }
@@ -216,12 +216,25 @@ canvas {
 
 /* ---------- barra de canais ---------- */
 
+/* A barra de nomes fica por cima do vídeo, no topo (a de volume de cada tela fica embaixo), e some com o mouse parado:
+   o Discord dá pouca altura à atividade e o vídeo usa toda. */
 #dock {
+  position: fixed;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px;
+  padding: 18px 20px 28px;
+  background: linear-gradient(rgb(0 0 0 / 0.85), transparent);
+  transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
 }
+body.idle #dock:not(:has(:focus-visible)) { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+/* Com 3 s sem mexer, a barra de nome e som de cada tela e o cursor também somem (o teclado mantém a barra à vista). */
+body.idle .slot:not(:has(:focus-visible)) .bar { opacity: 0; transform: translateY(6px); pointer-events: none; }
+body.idle { cursor: none; }
 
 #channels {
   flex: 1;

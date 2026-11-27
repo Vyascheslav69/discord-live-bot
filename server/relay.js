@@ -212,6 +212,8 @@ function onWatch(ws, id) {
 
 export const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/streams') {
+    const tela = String(req.headers['x-tela'] ?? '');
+    if (/^\d{1,5}x\d{1,5}( [a-z0-9-]{1,12})?$/.test(tela)) console.log(`  atividade: área de ${tela}`);
     const list = [...streams].filter(([, s]) => s.config).map(([id, s]) => ({ id, name: s.name }));
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(list));

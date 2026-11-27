@@ -424,8 +424,9 @@ app.whenReady().then(() => {
   win = new BrowserWindow({
     width: WIDTH,
     height: Math.min(HEIGHT, screen.getPrimaryDisplay().workAreaSize.height), // cabe em telas baixas (notebook 768p)
-    // Tamanho fixo: sem redimensionar, maximizar ou tela cheia (F11 incluso).
-    resizable: false,
+    // Redimensiona pelas bordas (com um mínimo para o layout caber); sem maximizar nem tela cheia (F11 incluso).
+    minWidth: 460,
+    minHeight: 560,
     maximizable: false,
     fullscreenable: false,
     frame: false, // barra de título própria (index.html)

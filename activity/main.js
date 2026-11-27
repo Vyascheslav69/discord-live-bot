@@ -2,10 +2,24 @@ import { DiscordSDK } from '@discord/embedded-app-sdk';
 import '@fontsource-variable/unbounded';
 import '@fontsource-variable/figtree';
 
+// Modo em que o Discord mostra a atividade (em foco, janelinha ou quadrado da grade): vai para o log do relay com o tamanho.
+let layoutMode = '';
+let sizeSent = false;
+
 // Fora do Discord (navegador comum) não há frame_id e o SDK lançaria erro.
 if (new URLSearchParams(location.search).has('frame_id')) {
-  new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID).ready();
+  const sdk = new DiscordSDK(import.meta.env.VITE_DISCORD_CLIENT_ID);
+  sdk
+    .ready()
+    .then(() =>
+      sdk.subscribe('ACTIVITY_LAYOUT_MODE_UPDATE', ({ layout_mode }) => {
+        layoutMode = ['foco', 'janelinha', 'grade'][layout_mode] ?? `modo${layout_mode}`;
+        sizeSent = false;
+      })
+    )
+    .catch((e) => console.warn('modo de exibição do Discord:', e));
 }
+addEventListener('resize', () => (sizeSent = false));
 
 const stage = document.getElementById('stage');
 const channelsEl = document.getElementById('channels');
@@ -263,6 +277,7 @@ function renderChannels() {
     const p = document.createElement('p');
     p.className = 'empty';
     p.textContent = 'Ninguém transmitindo agora. Abra o laele viewer e clique em Transmitir.';
+    document.body.classList.remove('idle'); // sem ninguém no ar a barra fica à vista
     channelsEl.replaceChildren(p);
     return;
   }
@@ -279,7 +294,13 @@ function renderChannels() {
       const label = document.createElement('span');
       label.textContent = decodeName(path);
       b.append(dot, label);
-      b.onclick = () => show(slots[focused], path);
+      b.onclick = () => {
+        const target = slots[focused];
+        // Já está na outra tela: troca as duas de lugar (a mesma transmissão nunca aparece duas vezes).
+        const other = visible.find((s) => s !== target && s.path === path);
+        if (other) show(other, target.path);
+        show(target, path);
+      };
       return b;
     })
   );
@@ -294,15 +315,18 @@ function autofill() {
       continue;
     }
     const used = visible.map((s) => s.path);
-    const next = live.find((p) => !used.includes(p)) ?? live[0];
+    const next = live.find((p) => !used.includes(p));
     if (next) show(slot, next);
-    else slot.message.textContent = '';
+    else slot.message.textContent = live.length ? 'Só tem uma transmissão no ar agora' : '';
   }
 }
 
 async function poll() {
   try {
-    const res = await fetch('/streams');
+    // Ao abrir e a cada mudança: tamanho e modo de exibição vão para o log do relay (ajuda a acertar o layout).
+    const headers = sizeSent ? {} : { 'X-Tela': `${innerWidth}x${innerHeight}${layoutMode && ` ${layoutMode}`}` };
+    sizeSent = true;
+    const res = await fetch('/streams', { headers });
     const next = (await res.json()).map((s) => s.id).sort();
     if (next.join() !== live.join()) {
       live = next;
@@ -326,6 +350,16 @@ document.querySelectorAll('#layout button').forEach((btn) => {
     autofill();
   };
 });
+
+// Barra de nomes some depois de 3 s sem mexer o mouse (ou tocar na tela); fica à vista se ninguém transmite.
+let idleTimer = null;
+function wake() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => live.length && document.body.classList.add('idle'), 3000);
+}
+for (const ev of ['pointermove', 'pointerdown', 'keydown']) document.addEventListener(ev, wake, { passive: true });
+wake();
 
 setFocus(0);
 renderChannels();

@@ -9,15 +9,40 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <header class="titlebar">
+      <span class="titlebar-name">laele viewer</span>
+      <div class="about">
+        <button id="about" class="tb-btn tb-small" type="button" title="Versão e atualização" aria-haspopup="dialog" aria-expanded="false" aria-controls="about-panel" aria-label="Versão e atualização">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+          <span id="update-dot" class="update-dot" hidden></span>
+        </button>
+        <div id="about-panel" class="about-panel" role="dialog" aria-label="Versão e atualização" hidden>
+          <p>Versão <strong id="version"></strong></p>
+          <p id="update-status" class="update-status" role="status"></p>
+          <button id="update" class="primary" type="button" hidden>Atualizar</button>
+        </div>
+      </div>
+      <button id="logs" class="tb-btn tb-small" type="button" title="Abrir logs" aria-label="Abrir logs">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></svg>
+      </button>
+      <button id="minimize" class="tb-btn" type="button" aria-label="Minimizar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12" /></svg>
+      </button>
+      <button id="close" class="tb-btn tb-close" type="button" aria-label="Fechar (continua na bandeja)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>
+      </button>
+    </header>
+
     <form id="setup" class="view" hidden>
       <header>
         <h1>laele viewer</h1>
-        <p class="hint">Escolha o nome que seus amigos vão ver na atividade. Fica salvo para as próximas vezes.</p>
+        <p class="hint">Vincule sua conta do Discord (com o Discord aberto neste PC): o nome que seus amigos veem é o seu apelido no servidor. Fica salvo para as próximas vezes.</p>
       </header>
 
-      <label class="field">
+      <!-- Só em servidor sem login do Discord. -->
+      <label id="name-field" class="field" hidden>
         <span>Seu nome</span>
-        <input id="name" maxlength="32" autocomplete="off" required />
+        <input id="name" maxlength="32" autocomplete="off" />
       </label>
 
       <label class="field">
@@ -31,8 +56,13 @@
         <input id="password" type="password" autocomplete="off" required />
       </label>
 
+      <p id="linked" class="linked" hidden>
+        Conta do Discord vinculada<span id="linked-name"></span>.
+        <button id="unlink" class="link" type="button">Desvincular</button>
+      </p>
+
       <p id="setup-error" class="error" role="alert"></p>
-      <button class="primary" type="submit">Salvar</button>
+      <button id="setup-submit" class="primary" type="submit">Vincular conta do Discord</button>
     </form>
 
     <main id="app" class="view" data-state="idle" hidden>
@@ -41,20 +71,8 @@
           <h1 id="who"></h1>
           <p id="status" role="status">Pronto para transmitir</p>
           <div class="links">
-            <button id="edit" class="link" type="button">Alterar nome, endereço ou senha</button>
-            <button id="logs" class="link" type="button">Abrir logs</button>
+            <button id="edit" class="link" type="button">Alterar endereço ou senha</button>
           </div>
-        </div>
-        <div class="dest">
-          <span class="dest-label" id="dest-label">Bot avisa em</span>
-          <button id="dest" class="dest-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="dest-list" aria-describedby="dest-label">
-            <span class="dest-text">
-              <span class="dest-guild" id="dest-guild"></span>
-              <span class="dest-channel" id="dest-channel"></span>
-            </span>
-            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-          </button>
-          <div id="dest-list" class="dest-list" role="listbox" aria-label="Onde o bot avisa quando você transmite" hidden></div>
         </div>
       </header>
 

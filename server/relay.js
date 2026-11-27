@@ -3,7 +3,7 @@
 //   tipo 0 = vídeo quadro-chave, 1 = vídeo delta, 2 = áudio (Opus)
 // Texto (JSON): hello/ok/error na entrada do laele viewer e "config" (codecs) repassado aos espectadores.
 import { createServer } from 'node:http';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -37,6 +37,68 @@ if (!passwordLine) {
 const passwordHash = sha(passwordLine);
 export const checkPassword = (p) => typeof p === 'string' && timingSafeEqual(sha(p), passwordHash);
 
+/* ---------- login com o Discord (OAuth2) ---------- */
+
+// Com DISCORD_CLIENT_SECRET (server/.env) e o bot no ar, quem transmite entra com a conta do Discord: o nome vem do
+// apelido no servidor e o aviso vai para a call em que a pessoa está. Sem isso, vale o nome digitado no laele viewer.
+const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+const discordLogin = () => !!CLIENT_SECRET && bot.ready();
+
+// Sessão = id do Discord assinado: nada fica guardado e ela continua valendo depois de reiniciar o relay.
+const sessionKey = CLIENT_SECRET ? sha(`laele-sessao:${CLIENT_SECRET}`) : null;
+const sign = (id) => createHmac('sha256', sessionKey).update(id).digest('base64url');
+export const makeSession = (id) => `${id}.${sign(id)}`;
+export function sessionUser(session) {
+  const [id, mac] = String(session ?? '').split('.');
+  if (!sessionKey || !/^\d{1,20}$/.test(id) || !mac) return null;
+  const a = Buffer.from(mac);
+  const b = Buffer.from(sign(id));
+  return a.length === b.length && timingSafeEqual(a, b) ? id : null;
+}
+
+// Endereço público por onde o pedido chegou (túnel, Vite ou direto).
+function publicOrigin(req) {
+  const proto = String(req.headers['x-forwarded-proto'] ?? 'http').split(',')[0];
+  return `${proto}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
+}
+
+// O laele viewer pede a autorização ao Discord aberto no PC (RPC local) e manda aqui o código; o relay confirma com
+// o Discord quem autorizou e devolve a sessão. Só quem clicou em "Autorizar" no próprio Discord recebe a sessão.
+async function onDiscordCode(req, res) {
+  if (!discordLogin()) return res.writeHead(503).end();
+  let body = '';
+  for await (const chunk of req) if ((body += chunk).length > 4096) return res.writeHead(413).end();
+  const code = (() => { try { return JSON.parse(body).code; } catch { return null; } })();
+  if (typeof code !== 'string' || !code) return res.writeHead(400).end();
+  try {
+    let token = null;
+    // Código do RPC não tem redirect_uri; se o Discord exigir um, usa o endereço de volta cadastrado no portal.
+    for (const redirect of [null, `${publicOrigin(req)}/auth/callback`]) {
+      const params = new URLSearchParams({ grant_type: 'authorization_code', code });
+      if (redirect) params.set('redirect_uri', redirect);
+      const r = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: { Authorization: `Basic ${Buffer.from(`${bot.applicationId()}:${CLIENT_SECRET}`).toString('base64')}` },
+        body: params,
+      });
+      if (r.ok) {
+        token = await r.json();
+        break;
+      }
+      console.error(`Login do Discord: troca do código${redirect ? ' (com redirect)' : ''} respondeu ${r.status} ${await r.text()}`);
+    }
+    if (!token) return res.writeHead(401).end();
+    const user = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token.access_token}` } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`usuário: ${r.status}`))));
+    console.log(`  conta do Discord vinculada: ${user.username}`);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ session: makeSession(user.id) }));
+  } catch (e) {
+    console.error(`Login do Discord falhou (${e.message})`);
+    return res.writeHead(502).end();
+  }
+}
+
 // "Júlia", "julia" e " JULIA " são o mesmo nome.
 export const sameName = (a, b) => {
   const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
@@ -53,8 +115,11 @@ function onPublish(ws) {
   let stream = null;
   const helloTimer = setTimeout(() => ws.close(4001, 'sem hello'), 5000);
 
-  ws.on('message', (data, isBinary) => {
+  let helloSeen = false;
+  ws.on('message', async (data, isBinary) => {
     if (!stream) {
+      if (helloSeen) return; // nada chega antes do "ok"; ignora enquanto confere o hello
+      helloSeen = true;
       clearTimeout(helloTimer);
       let hello;
       try {
@@ -62,8 +127,19 @@ function onPublish(ws) {
       } catch {
         return ws.close(4002, 'hello inválido');
       }
-      const name = String(hello.name ?? '').trim().slice(0, 32);
       if (!checkPassword(hello.password)) return send(ws, { type: 'error', code: 'senha' }), ws.close(4003, 'senha');
+      let name = String(hello.name ?? '').trim().slice(0, 32);
+      let call = null;
+      if (discordLogin()) {
+        // Com login do Discord o nome digitado não vale: ninguém transmite com o nome de outra pessoa.
+        const userId = sessionUser(hello.session);
+        if (!userId) return send(ws, { type: 'error', code: 'sessao' }), ws.close(4003, 'sessão');
+        const who = await bot.member(userId).catch(() => null);
+        if (!who) return send(ws, { type: 'error', code: 'discord' }), ws.close(4003, 'fora dos servidores');
+        name = who.name.trim().slice(0, 32);
+        call = who.channel; // o bot sempre avisa na call em que a pessoa está
+        if (ws.readyState !== ws.OPEN) return; // desistiu enquanto conferia
+      }
       if (!name) return send(ws, { type: 'error', code: 'nome-vazio' }), ws.close(4002, 'nome');
       if ([...streams.values()].some((s) => sameName(s.name, name))) {
         return send(ws, { type: 'error', code: 'nome' }), ws.close(4009, 'nome em uso');
@@ -72,9 +148,9 @@ function onPublish(ws) {
       stream = { name, config: null, viewers: new Set() };
       streams.set(id, stream);
       console.log(`+ ${name} começou a transmitir`);
-      // Aviso no Discord com o link da atividade (na call que o laele viewer escolheu).
+      // Aviso no Discord com o link da atividade, na call em que a pessoa está (login do Discord).
       stream.announcement = bot
-        .announce(name, hello.guildId, hello.channelId)
+        .announce(name, call?.guildId, call?.id)
         .then((msg) => {
           if (msg) console.log(`  aviso enviado em #${msg.channel.name} (${msg.url})`);
           return msg;
@@ -140,11 +216,22 @@ export const server = createServer((req, res) => {
     return res.end(JSON.stringify(list));
   }
   // Servidores/calls onde o bot pode avisar. Só para quem tem a senha (os nomes dos servidores não são públicos).
-  if (req.method === 'GET' && req.url === '/destinations') {
-    const password = (req.headers.authorization ?? '').replace(/^Bearer /, '');
-    if (!checkPassword(password)) return res.writeHead(401).end();
+  const url = new URL(req.url, 'http://relay');
+  if (req.method === 'GET' && url.pathname === '/auth/config') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify(bot.destinations()));
+    return res.end(JSON.stringify({ discord: discordLogin(), clientId: bot.applicationId() ?? null }));
+  }
+  if (req.method === 'POST' && url.pathname === '/auth/discord') return onDiscordCode(req, res);
+  // Nome no servidor do dono da sessão (só para quem tem a senha).
+  if (req.method === 'GET' && url.pathname === '/me') {
+    if (!checkPassword((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return res.writeHead(401).end();
+    const userId = sessionUser(req.headers['x-session']);
+    if (!userId) return res.writeHead(403).end();
+    return bot.member(userId).then((who) => {
+      if (!who) return res.writeHead(404).end();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ name: who.name }));
+    }, () => res.writeHead(502).end());
   }
   if (STATIC_DIR && req.method === 'GET') return serveStatic(req, res);
   res.writeHead(404).end();

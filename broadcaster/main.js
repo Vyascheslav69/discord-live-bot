@@ -1,6 +1,11 @@
 const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron');
 const { execFile, spawn } = require('child_process');
+const { randomBytes } = require('crypto');
+const net = require('net');
+const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { log, dir: logDir } = require('./log');
 
 process.on('uncaughtException', (e) => log('erro', 'exceção não tratada:', e));
@@ -198,19 +203,139 @@ ipcMain.handle('select-source', async (_, id) => {
 // Log vindo da página (estados, erros) e botão "Abrir logs".
 ipcMain.on('log', (_, level, message) => log(level, message));
 ipcMain.handle('open-logs', () => shell.openPath(logDir));
+
+/* ---------- barra própria da janela e atualização ---------- */
+
+// Fechar passa pelo evento 'close' (esconde na bandeja), igual ao X do sistema.
+ipcMain.on('window', (_, action) => (action === 'minimize' ? win.minimize() : win.close()));
+ipcMain.handle('app-version', () => app.getVersion());
+
+const REPO = 'Vyascheslav69/discord-live-bot';
+// Instalador deste sistema entre os arquivos da Release (nomes definidos em package.json → build).
+const ASSET = { win32: /\.exe$/, darwin: new RegExp(`-mac-${process.arch}\\.dmg$`), linux: /\.AppImage$/ }[process.platform];
+let release = null;
+
+// "1.10.0" é mais nova que "1.9.2".
+const isNewer = (a, b) => {
+  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+
+ipcMain.handle('check-update', async () => {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
+  if (!res.ok) throw new Error(`GitHub respondeu ${res.status}`);
+  release = await res.json();
+  const latest = release.tag_name.replace(/^v/, '');
+  return { latest, newer: isNewer(latest, app.getVersion()) };
+});
+
+// Windows: baixa o instalador e abre (ele instala por cima). Mac/Linux: o download abre no navegador.
+ipcMain.handle('install-update', async () => {
+  const asset = release?.assets.find((a) => ASSET?.test(a.name));
+  if (process.platform !== 'win32' || !asset) {
+    await shell.openExternal(asset?.browser_download_url ?? release.html_url);
+    return 'browser';
+  }
+  const file = path.join(app.getPath('temp'), asset.name);
+  const res = await fetch(asset.browser_download_url);
+  if (!res.ok) throw new Error(`download respondeu ${res.status}`);
+  const body = Readable.fromWeb(res.body);
+  let got = 0;
+  let shown = -1;
+  body.on('data', (chunk) => {
+    const pct = Math.floor(((got += chunk.length) / asset.size) * 100);
+    if (pct !== shown) win?.webContents.send('update-progress', (shown = pct));
+  });
+  await pipeline(body, fs.createWriteStream(file));
+  log('info', `abrindo o instalador da versão ${release.tag_name}`);
+  spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
+  app.quit(); // o instalador precisa do app fechado
+});
 // No Mac a captura de tela depende da permissão "Gravação de Tela" do sistema.
 ipcMain.handle('screen-access', () => (process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'));
-// Servidores/calls onde o bot pode avisar (pelo processo principal: a página file:// esbarraria em CORS).
-ipcMain.handle('destinations', async (_, server, password) => {
-  try {
-    const res = await fetch(new URL('/destinations', server), { headers: { Authorization: `Bearer ${password}` } });
-    if (res.status === 401) throw new Error('senha');
-    if (!res.ok) throw new Error(`servidor respondeu ${res.status}`);
-    return await res.json();
-  } catch (e) {
-    log('aviso', `lista de calls do bot em ${server}:`, e.message);
-    throw e;
-  }
+/* ---------- conta do Discord (pelo processo principal: a página file:// esbarraria em CORS) ---------- */
+
+// O servidor tem login do Discord? Sem ele, o laele viewer pede o nome digitado.
+ipcMain.handle('server-info', async (_, server) => {
+  const res = await fetch(new URL('/auth/config', server)).catch(() => null);
+  if (!res) throw new Error('servidor');
+  return res.ok ? res.json() : { discord: false }; // relay antigo, sem /auth
+});
+
+// Pede a autorização ao Discord aberto no PC (RPC local: pipe/socket "discord-ipc-N"). O Discord mostra a janela
+// "Autorizar" e devolve um código, que o relay troca pela conta. Sem navegador e sem senha.
+function discordAuthorize(clientId) {
+  const base = (process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+  // Windows: pipe. Mac: $TMPDIR. Linux: Discord normal, Flatpak e Snap põem o socket em lugares diferentes.
+  const paths = process.platform === 'win32'
+    ? [...Array(10).keys()].map((i) => `\\\\?\\pipe\\discord-ipc-${i}`)
+    : [base, `${base}/app/com.discordapp.Discord`, `${base}/snap.discord`].flatMap((d) => [...Array(10).keys()].map((i) => `${d}/discord-ipc-${i}`));
+  const open = (p) =>
+    new Promise((resolve, reject) => {
+      const sock = net.createConnection(p);
+      sock.once('connect', () => resolve(sock));
+      sock.once('error', reject);
+    });
+  return (async () => {
+    let sock = null;
+    let blocked = false;
+    for (const p of paths) {
+      sock = await open(p).catch((e) => ((blocked ||= e.code === 'EPERM' || e.code === 'EACCES'), null));
+      if (sock) break;
+    }
+    // EPERM: o Discord existe, mas está aberto como administrador e o Windows bloqueia a conversa.
+    if (!sock) throw new Error(blocked ? 'discord-admin' : 'discord-fechado');
+    // Mensagem: [op int32 LE][tamanho int32 LE][JSON]. op 0 = handshake, 1 = comando, 2 = fechou.
+    const send = (op, obj) => {
+      const json = Buffer.from(JSON.stringify(obj));
+      const head = Buffer.alloc(8);
+      head.writeInt32LE(op, 0);
+      head.writeInt32LE(json.length, 4);
+      sock.write(Buffer.concat([head, json]));
+    };
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error('a autorização no Discord não terminou a tempo')), 2 * 60_000);
+      const finish = (err, code) => {
+        clearTimeout(timer);
+        sock.destroy();
+        err ? reject(err) : resolve(code);
+      };
+      let buf = Buffer.alloc(0);
+      sock.on('data', (chunk) => {
+        buf = Buffer.concat([buf, chunk]);
+        while (buf.length >= 8 && buf.length >= 8 + buf.readInt32LE(4)) {
+          const op = buf.readInt32LE(0);
+          const msg = JSON.parse(buf.subarray(8, 8 + buf.readInt32LE(4)).toString());
+          buf = buf.subarray(8 + buf.readInt32LE(4));
+          if (op === 2) return finish(new Error(msg.message ?? 'o Discord fechou a conexão'));
+          if (msg.evt === 'READY') send(1, { cmd: 'AUTHORIZE', args: { client_id: clientId, scopes: ['identify'] }, nonce: randomBytes(8).toString('hex') });
+          else if (msg.evt === 'ERROR') return finish(new Error(/access_denied|cancel/i.test(msg.data?.message) ? 'recusado' : msg.data?.message ?? 'erro no Discord'));
+          else if (msg.cmd === 'AUTHORIZE') return finish(null, msg.data.code);
+        }
+      });
+      sock.on('error', (e) => finish(e));
+      sock.on('close', () => finish(new Error('o Discord fechou a conexão')));
+      send(0, { v: 1, client_id: clientId });
+    });
+  })();
+}
+
+ipcMain.handle('discord-login', async (_, server, clientId) => {
+  const code = await discordAuthorize(clientId);
+  const res = await fetch(new URL('/auth/discord', server), { method: 'POST', body: JSON.stringify({ code }) });
+  if (!res.ok) throw new Error(`o servidor não confirmou a conta (${res.status})`);
+  return (await res.json()).session;
+});
+
+// Nome no servidor e call atual de quem está logado.
+ipcMain.handle('me', async (_, server, password, session) => {
+  const res = await fetch(new URL('/me', server), { headers: { Authorization: `Bearer ${password}`, 'X-Session': session } });
+  if (res.status === 401) throw new Error('senha');
+  if (res.status === 403) throw new Error('sessao');
+  if (res.status === 404) throw new Error('discord');
+  if (!res.ok) throw new Error(`servidor respondeu ${res.status}`);
+  return res.json();
 });
 
 /* ---------- áudio do PC sem o Discord (evita eco) ---------- */
@@ -303,6 +428,8 @@ app.whenReady().then(() => {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
+    frame: false, // barra de título própria (index.html)
+    icon: path.join(__dirname, 'build', 'icon.png'), // barra de tarefas (sem isso, rodando do código, aparece o do Electron)
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     title: 'laele viewer',

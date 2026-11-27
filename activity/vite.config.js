@@ -10,7 +10,9 @@ const shared = {
   proxy: {
     '/ws/': { target: `ws://${RELAY}`, ws: true },
     '/streams': `http://${RELAY}`,
-    '/destinations': `http://${RELAY}`,
+    // Mantém o Host público: o relay monta com ele o endereço de volta do login do Discord.
+    '/auth/': { target: `http://${RELAY}`, changeOrigin: false },
+    '/me': `http://${RELAY}`,
   },
 };
 

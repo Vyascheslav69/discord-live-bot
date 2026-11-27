@@ -10,6 +10,8 @@
 - `activity/` — a página que roda dentro do Discord. Mostra quem está transmitindo, troca de tela, mostra duas lado a lado, tem volume por tela e tela cheia (botão ou duplo clique).
 - `SENHA-TRANSMISSOR.txt` — a senha para transmitir (linha 2). **Não vai para o GitHub.** Num computador novo, copie `SENHA-TRANSMISSOR.example.txt` e troque a senha.
 
+**Conta do Discord**: quem transmite entra com a conta do Discord. O nome na atividade é o apelido da pessoa no servidor, e o bot avisa na call em que ela está quando a transmissão começa. Ninguém consegue transmitir com o nome de outra pessoa.
+
 **Nomes únicos**: duas pessoas não transmitem com o mesmo nome. "Zoë", "zoe" e "ZOE" contam como o mesmo. Quando alguém para de transmitir, o nome fica livre na hora.
 
 **Atraso**: o vídeo vai por WebSocket, que funciona dentro do Discord. O Discord bloqueia WebRTC nas atividades, e o HLS ficava com segundos de atraso. Medido pelo proxy do Discord: ~30 ms do laele viewer até a atividade, mais a captura e a decodificação. Se a rede engasga, quadros atrasados são descartados em vez de acumular atraso.
@@ -30,12 +32,15 @@
    - **Mac**: abra o `.dmg` e arraste o app para Aplicativos. Na primeira vez, clique com o botão direito no app → **Abrir** (o app não tem assinatura da Apple). Depois libere em Ajustes do Sistema → Privacidade e Segurança → **Gravação de Tela** e abra o app de novo.
    - **Linux**: `chmod +x laele-viewer-*.AppImage` e abra. Se não abrir, instale `libfuse2`. No Wayland, quem escolhe a tela é o seletor do sistema. Sem codificador H.264, o app usa VP8, que pesa mais no processador em 1080p60.
 3. Na primeira vez, preencha:
-   - **Seu nome**: é o que aparece na atividade.
-   - **Endereço do servidor**: no PC do servidor, `http://localhost:5173`. Nos outros, o endereço do túnel que o dono do servidor passar.
+   - **Endereço do servidor**: no PC do servidor, `http://localhost:5173`. Nos outros, o endereço que o dono do servidor passar (ex.: `https://live.laeleviewer.dpdns.org`).
    - **Senha**: a de `SENHA-TRANSMISSOR.txt`, que o dono do servidor passa.
-4. Escolha a tela ou janela e a qualidade e clique em **Transmitir** (um bipe avisa quando liga e quando desliga). Dá para trocar as duas coisas com a transmissão no ar. No canto superior direito aparecem o servidor e a call onde o bot vai avisar. Clique ali para trocar.
 
-Para trocar nome, endereço ou senha depois, use "Alterar nome, endereço ou senha".
+   Clique em **Entrar com Discord**: o navegador abre a tela de autorização do Discord; autorize e volte para o app. Seu nome passa a ser o seu apelido no servidor do bot. (Se o servidor não tiver o login do Discord ligado, o app pede o nome digitado.)
+4. Entre numa call do servidor, escolha a tela ou janela e a qualidade e clique em **Transmitir** (um bipe avisa quando liga e quando desliga). O bot manda o link da atividade no chat da call em que você está. Dá para trocar tela e qualidade com a transmissão no ar. No canto superior direito aparece a call atual; clique ali para escolher "Não avisar no Discord".
+
+Para trocar endereço, senha ou conta depois, use "Alterar endereço, senha ou conta".
+
+**Atualizar**: o ícone ⓘ ao lado do nome, na barra do app, mostra a versão instalada e procura uma mais nova nas Releases (um ponto aceso no ícone avisa que tem). No Windows, **Atualizar** baixa o instalador e abre por cima. No Mac e no Linux, o download abre no navegador.
 
 ### Log (para entender erros em outros computadores)
 
@@ -83,15 +88,18 @@ Para gerar só o do seu sistema: `cd broadcaster; npm i; npm run dist` (sai em `
 
 ### 3. Bot que avisa quando alguém transmite
 
-O bot manda no chat da call escolhida algo como "🔴 **Ethan** começou a transmitir. Clique para assistir", com um link que abre a atividade naquela call. Quando a transmissão acaba, a mensagem muda para "parou de transmitir". O Discord não deixa bots abrirem a atividade sozinhos, por isso o link.
+O bot manda no chat da call em que a pessoa está algo como "🔴 **Ethan** começou a transmitir. Clique para assistir", com um link que abre a atividade naquela call. Quando a transmissão acaba, a mensagem muda para "parou de transmitir". O Discord não deixa bots abrirem a atividade sozinhos, por isso o link.
 
 1. No portal, em **Bot**, clique em **Reset Token** e copie o token. **Não mande para ninguém**: quem tem o token controla o bot.
 2. Copie `server/.env.example` para `server/.env` e cole o token depois de `DISCORD_BOT_TOKEN=`.
 3. Adicione o bot a cada servidor onde ele vai avisar, abrindo este link (permissões: ver canais, mandar mensagens, inserir links, criar convite):
    https://discord.com/oauth2/authorize?client_id=1575533587091034112&scope=bot&permissions=19457
-4. Reinicie o relay (`cd server; npm start`). O terminal deve mostrar "Bot conectado como …".
+4. **Login com o Discord** (nome e call de quem transmite): no portal, em **OAuth2**, clique em **Reset Secret** e copie o *Client Secret* para `server/.env`, numa linha `DISCORD_CLIENT_SECRET=`. **Não mande para ninguém.** Na mesma página, em **Redirects**, adicione os endereços de volta do login e salve:
+   - `https://live.laeleviewer.dpdns.org/auth/callback` (o endereço público do servidor);
+   - `http://localhost:5173/auth/callback` (para quem transmite do próprio PC do servidor).
+5. Reinicie o relay (`cd server; npm start`). O terminal deve mostrar "Bot conectado como …".
 
-No laele viewer, só aparecem as calls em que o bot tem permissão para mandar mensagem e criar convite. Dá para escolher "Não avisar no Discord".
+O bot só avisa em calls onde tem permissão para mandar mensagem e criar convite. Sem `DISCORD_CLIENT_SECRET`, o login fica desligado: o laele viewer pede o nome digitado e o bot não avisa.
 
 ### 4. Rodar (cada um num terminal, a partir desta pasta)
 
@@ -119,7 +127,7 @@ No Pterodactyl:
 3. Arquivo de inicialização (*Main file* / *JS file*): `pterodactyl.js`.
 4. Senha, token e ID: use as variáveis do painel, se o egg deixar criá-las. Se não deixar, use os arquivos:
    - `SENHA_TRANSMISSOR` ou o arquivo `SENHA-TRANSMISSOR.txt`
-   - `DISCORD_BOT_TOKEN` em `server/.env`
+   - `DISCORD_BOT_TOKEN` e `DISCORD_CLIENT_SECRET` em `server/.env`
    - `VITE_DISCORD_CLIENT_ID` em `server/.env` ou `activity/.env`
    - `CLOUDFLARE_TUNNEL_TOKEN` (opcional, veja abaixo) em `server/.env`
 5. Ligue o servidor. O console mostra `Endereço público: https://….trycloudflare.com`. Coloque esse host no URL Mapping do portal. No laele viewer, o endereço do servidor é esse mesmo.

@@ -29,28 +29,40 @@ let startedAt = 0;
 /* ---------- dados salvos ---------- */
 
 const settings = () => ({
-  name: localStorage.getItem('name') ?? '',
+  name: localStorage.getItem('name') ?? '', // só em servidor sem login do Discord
   server: localStorage.getItem('server') ?? 'http://localhost:5173',
   password: localStorage.getItem('password') ?? '',
+  session: localStorage.getItem('session') ?? '', // login do Discord, assinado pelo relay
 });
+let askName = false; // o servidor não tem login do Discord: o nome é digitado
+let me = null; // { name } da conta do Discord vinculada
+
+// Erro de um ipcRenderer.invoke sem o prefixo "Error invoking remote method …".
+const ipcError = (e) => e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 function showSetup(error = '') {
   const s = settings();
   $('name').value = s.name;
   $('server').value = s.server;
   $('password').value = s.password;
+  $('name-field').hidden = !askName;
+  // Conta já vinculada: trocar endereço ou senha não pede o vínculo de novo.
+  $('linked').hidden = !s.session;
+  $('linked-name').textContent = me?.name ?? '';
+  $('setup-submit').textContent = askName || s.session ? 'Salvar' : 'Vincular conta do Discord';
   $('setup-error').textContent = error;
   app.hidden = true;
   setupForm.hidden = false;
-  $(s.name ? 'password' : 'name').focus();
+  $(askName && !s.name ? 'name' : 'password').focus();
 }
 
 function showApp() {
-  $('who').textContent = settings().name;
+  const s = settings();
+  $('who').textContent = s.session ? me?.name ?? '' : s.name;
   setupForm.hidden = true;
   app.hidden = false;
   loadSources();
-  loadDestinations();
+  refreshMe();
   // Mac: sem a permissão "Gravação de Tela" as telas aparecem pretas e nada é capturado.
   window.capture.screenAccess().then((status) => {
     if (status === 'denied' || status === 'restricted') {
@@ -59,116 +71,77 @@ function showApp() {
   });
 }
 
-setupForm.onsubmit = (e) => {
+setupForm.onsubmit = async (e) => {
   e.preventDefault();
-  const name = $('name').value.trim();
-  if (!name) return ($('setup-error').textContent = 'Escreva seu nome.');
-  localStorage.setItem('name', name);
-  localStorage.setItem('server', $('server').value.trim().replace(/\/+$/, ''));
+  const server = $('server').value.trim().replace(/\/+$/, '');
+  const submit = $('setup-submit');
+  localStorage.setItem('server', server);
   localStorage.setItem('password', $('password').value);
-  showApp();
+  submit.disabled = true;
+  try {
+    const { discord, clientId } = await window.capture.serverInfo(server);
+    if (!discord) {
+      const name = $('name').value.trim();
+      if (!askName || !name) {
+        askName = true;
+        return showSetup('Este servidor não tem login do Discord: escreva seu nome.');
+      }
+      localStorage.setItem('name', name);
+      localStorage.removeItem('session');
+      return showApp();
+    }
+    askName = false;
+    if (settings().session) return showApp(); // já vinculada (se o servidor não aceitar a sessão, ele pede de novo)
+    $('setup-error').textContent = 'Clique em "Autorizar" na janela que abriu no Discord…';
+    localStorage.setItem('session', await window.capture.discordLogin(server, clientId));
+    me = null;
+    showApp();
+  } catch (error) {
+    const msg = ipcError(error);
+    const texts = {
+      servidor: `Não achei o servidor em ${server}. Ele está ligado?`,
+      'discord-fechado': 'Abra o Discord neste PC (o app do Discord, não o site) e tente de novo.',
+      'discord-admin': 'O Discord está aberto como administrador e o Windows bloqueia a conexão. Feche o Discord e abra de novo normalmente (sem "Executar como administrador").',
+      recusado: 'A autorização foi recusada no Discord.',
+    };
+    $('setup-error').textContent = texts[msg] ?? `Não deu para vincular: ${msg}`;
+  } finally {
+    submit.disabled = false;
+  }
 };
 
 $('edit').onclick = () => showSetup();
+$('unlink').onclick = () => {
+  localStorage.removeItem('session');
+  me = null;
+  showSetup();
+};
 $('logs').onclick = () => window.capture.openLogs();
 
 // Vai para o arquivo de log (erros do console da página já são registrados pelo processo principal).
 const log = (level, ...parts) => window.capture.log(level, parts.join(' '));
 
-/* ---------- onde o bot avisa (servidor e call) ---------- */
+/* ---------- conta do Discord: nome no servidor ---------- */
 
-const destBtn = $('dest');
-const destList = $('dest-list');
-let destinations = []; // [{ id, name, channels: [{ id, name }] }] vindos do relay
-
-const savedDest = () => JSON.parse(localStorage.getItem('dest') ?? 'null');
-
-// Escolha salva; sem escolha ainda, a primeira call disponível.
-function currentDest() {
-  const saved = savedDest();
-  if (saved?.none) return null;
-  for (const g of destinations) {
-    for (const c of g.channels) {
-      if (!saved || (g.id === saved.guildId && c.id === saved.channelId)) {
-        return { guildId: g.id, channelId: c.id, guildName: g.name, channelName: c.name };
-      }
-    }
-  }
-  return null;
-}
-
-function renderDest() {
-  const d = currentDest();
-  let guild = d?.guildName ?? 'Escolha onde avisar';
-  if (!destinations.length) guild = 'Bot do Discord fora do ar';
-  else if (savedDest()?.none) guild = 'Sem aviso no Discord';
-  $('dest-guild').textContent = guild;
-  $('dest-channel').textContent = d?.channelName ?? '';
-  destBtn.disabled = !destinations.length || app.dataset.state === 'live' || app.dataset.state === 'connecting';
-}
-
-async function loadDestinations() {
-  const { server, password } = settings();
+async function refreshMe() {
+  const { server, password, session } = settings();
+  if (!session) return;
   try {
-    destinations = await window.capture.destinations(server, password);
-  } catch {
-    destinations = [];
-  }
-  renderDest();
-}
-
-function chooseDest(value) {
-  localStorage.setItem('dest', JSON.stringify(value));
-  closeDest();
-  renderDest();
-}
-
-function option(label, selected, onPick, extraClass = '') {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = `dest-option ${extraClass}`;
-  b.setAttribute('role', 'option');
-  b.setAttribute('aria-selected', selected);
-  b.textContent = label;
-  b.onclick = onPick;
-  return b;
-}
-
-async function openDest() {
-  await loadDestinations();
-  if (!destinations.length) return;
-  const d = currentDest();
-  const items = [];
-  for (const g of destinations) {
-    const label = document.createElement('p');
-    label.className = 'dest-group';
-    label.textContent = g.name;
-    items.push(label);
-    for (const c of g.channels) {
-      const selected = d?.guildId === g.id && d?.channelId === c.id;
-      items.push(option(`🔊 ${c.name}`, selected, () => chooseDest({ guildId: g.id, channelId: c.id })));
+    me = await window.capture.me(server, password, session);
+    $('who').textContent = me.name;
+  } catch (e) {
+    const code = ipcError(e);
+    if (code === 'sessao') {
+      localStorage.removeItem('session');
+      return showSetup('Vincule sua conta do Discord de novo.');
     }
+    // Fora dos servidores do bot ou bot fora do ar: o erro aparece ao transmitir.
+    if (code !== 'discord') log('aviso', 'não consegui ver a conta do Discord:', code);
   }
-  items.push(option('Não avisar no Discord', !!savedDest()?.none, () => chooseDest({ none: true }), 'none'));
-  destList.replaceChildren(...items);
-  destList.hidden = false;
-  destBtn.setAttribute('aria-expanded', 'true');
-  (destList.querySelector('[aria-selected="true"]') ?? destList.querySelector('button')).focus();
 }
 
-function closeDest() {
-  destList.hidden = true;
-  destBtn.setAttribute('aria-expanded', 'false');
-}
-
-destBtn.onclick = () => (destList.hidden ? openDest() : closeDest());
-document.addEventListener('pointerdown', (e) => !destList.hidden && !e.target.closest('.dest') && closeDest());
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !destList.hidden) {
-    closeDest();
-    destBtn.focus();
-  }
-});
+// O apelido pode mudar no servidor: confere a cada 5 s com a janela em primeiro plano.
+setInterval(() => !app.hidden && document.hasFocus() && refreshMe(), 5000);
 
 /* ---------- fontes ---------- */
 
@@ -286,8 +259,6 @@ function setState(state, text) {
   document.querySelectorAll('.seg button').forEach((b) => (b.disabled = connecting));
   toggleBtn.disabled = state === 'connecting';
   $('toggle-label').textContent = state === 'live' ? 'Parar transmissão' : state === 'connecting' ? 'Conectando…' : 'Transmitir';
-  closeDest();
-  renderDest();
 }
 
 /* ---------- envio ---------- */
@@ -345,9 +316,9 @@ function connect(server, name, password) {
     const sock = new WebSocket(url);
     sock.binaryType = 'arraybuffer';
     const timer = setTimeout(() => (sock.close(), reject(new Error('servidor'))), 8000);
-    // Junto vai a call onde o bot deve avisar (ou nada, se "Não avisar").
-    const dest = currentDest();
-    sock.onopen = () => sock.send(JSON.stringify({ name, password, guildId: dest?.guildId, channelId: dest?.channelId }));
+    // Com a conta vinculada o relay tira o nome e a call da sessão (e o bot sempre avisa na call).
+    const { session } = settings();
+    sock.onopen = () => sock.send(JSON.stringify(session ? { session, password } : { name, password }));
     sock.onerror = () => (clearTimeout(timer), reject(new Error('servidor')));
     sock.onmessage = (e) => {
       clearTimeout(timer);
@@ -527,7 +498,15 @@ async function start() {
     log('erro', 'falha ao iniciar a transmissão:', err.stack ?? msg);
     stop();
     if (msg === 'senha') return showSetup('Senha errada. Confira com quem cuida do servidor.');
-    if (msg === 'nome') return setState('error', `Já tem alguém transmitindo como ${name}. Troque seu nome em "Alterar nome, endereço ou senha".`);
+    if (msg === 'nome') {
+      const who = settings().session ? me?.name ?? 'você' : name;
+      return setState('error', `Já tem alguém transmitindo como ${who}.${settings().session ? '' : ' Troque seu nome em "Alterar endereço ou senha".'}`);
+    }
+    if (msg === 'sessao') {
+      localStorage.removeItem('session');
+      return showSetup('Este servidor pede a conta do Discord vinculada.');
+    }
+    if (msg === 'discord') return setState('error', 'Sua conta do Discord não está em nenhum servidor do bot (ou o bot está fora do ar).');
     if (msg === 'servidor') return setState('error', `Não achei o servidor em ${server}. Ele está ligado? O endereço do túnel mudou?`);
     setState('error', `Não deu para transmitir: ${msg}`);
   }
@@ -555,5 +534,63 @@ function stop() {
   setState('idle', 'Transmissão encerrada');
 }
 
-if (settings().name && settings().password) showApp();
+/* ---------- barra da janela, versão e atualização ---------- */
+
+$('minimize').onclick = () => window.capture.windowAction('minimize');
+$('close').onclick = () => window.capture.windowAction('close');
+
+const aboutBtn = $('about');
+const aboutPanel = $('about-panel');
+const updateBtn = $('update');
+const updateStatus = $('update-status');
+window.capture.version().then((v) => ($('version').textContent = v));
+
+async function checkUpdate() {
+  updateStatus.textContent = 'Procurando atualização…';
+  updateBtn.hidden = true;
+  try {
+    const { latest, newer } = await window.capture.checkUpdate();
+    updateStatus.textContent = newer ? `Versão ${latest} disponível.` : 'Você está na versão mais recente.';
+    updateBtn.hidden = !newer;
+    $('update-dot').hidden = !newer;
+  } catch (e) {
+    log('aviso', 'não consegui procurar atualização:', e.message);
+    updateStatus.textContent = 'Não consegui procurar atualização. Confira a internet.';
+  }
+}
+checkUpdate(); // ao abrir o app: acende o ponto no botão se houver versão nova
+
+function toggleAbout(open) {
+  aboutPanel.hidden = !open;
+  aboutBtn.setAttribute('aria-expanded', open);
+  if (open) checkUpdate();
+}
+aboutBtn.onclick = () => toggleAbout(aboutPanel.hidden);
+document.addEventListener('pointerdown', (e) => !aboutPanel.hidden && !e.target.closest('.about') && toggleAbout(false));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !aboutPanel.hidden) {
+    toggleAbout(false);
+    aboutBtn.focus();
+  }
+});
+
+updateBtn.onclick = async () => {
+  // O app fecha para o instalador rodar: a transmissão cairia.
+  if (ws) return (updateStatus.textContent = 'Pare a transmissão antes de atualizar.');
+  updateBtn.disabled = true;
+  updateStatus.textContent = 'Baixando…';
+  try {
+    if ((await window.capture.installUpdate()) === 'browser') {
+      updateStatus.textContent = 'O download abriu no navegador. Instale por cima da versão atual.';
+      updateBtn.disabled = false;
+    }
+  } catch (e) {
+    log('erro', 'falha ao atualizar:', e.message);
+    updateStatus.textContent = `Não deu para atualizar: ${e.message}`;
+    updateBtn.disabled = false;
+  }
+};
+window.capture.onUpdateProgress((pct) => (updateStatus.textContent = `Baixando… ${pct}%`));
+
+if (settings().password && (settings().session || settings().name)) showApp();
 else showSetup();

@@ -11,7 +11,8 @@ process.env.PASSWORD_FILE = join(dir, 'senha.txt');
 writeFileSync(process.env.PASSWORD_FILE, 'Senha:\nsegredo\n');
 process.env.PORT = '0';
 process.env.DISCORD_BOT_TOKEN = ''; // teste sem conectar ao Discord
-const { server } = await import('./relay.js');
+process.env.DISCORD_CLIENT_SECRET = 'segredo-de-teste'; // assina as sessões (o login fica desligado sem o bot)
+const { server, makeSession, sessionUser } = await import('./relay.js');
 await once(server, 'listening');
 const base = `ws://127.0.0.1:${server.address().port}`;
 
@@ -53,10 +54,21 @@ juan.ws.send(frame(1, 4)); // delta depois do chave
 await new Promise((r) => setTimeout(r, 100));
 assert.deepEqual(got, [2, 3, 4]);
 
-// lista de servidores/calls exige a senha (sem bot: lista vazia)
+// sem bot no ar não há login do Discord: vale o nome digitado
 const http = `http://127.0.0.1:${server.address().port}`;
-assert.equal((await fetch(`${http}/destinations`)).status, 401);
-assert.deepEqual(await (await fetch(`${http}/destinations`, { headers: { Authorization: 'Bearer segredo' } })).json(), []);
+assert.deepEqual(await (await fetch(`${http}/auth/config`)).json(), { discord: false, clientId: null });
+assert.equal((await fetch(`${http}/auth/discord`, { method: 'POST', body: '{"code":"x"}' })).status, 503);
+
+// "quem sou eu" exige a senha e uma sessão válida
+assert.equal((await fetch(`${http}/me`)).status, 401);
+assert.equal((await fetch(`${http}/me`, { headers: { Authorization: 'Bearer segredo', 'X-Session': 'x' } })).status, 403);
+
+// sessão assinada: aceita a própria, recusa id trocado ou assinatura mexida
+const session = makeSession('123456789012345678');
+assert.equal(sessionUser(session), '123456789012345678');
+assert.equal(sessionUser(session.replace('123', '124')), null);
+assert.equal(sessionUser(`${session}x`), null);
+assert.equal(sessionUser(undefined), null);
 
 // fim da transmissão fecha o espectador e libera o nome
 juan.ws.close();

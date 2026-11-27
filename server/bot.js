@@ -11,7 +11,8 @@ try {
   // sem server/.env: bot desligado
 }
 const token = process.env.DISCORD_BOT_TOKEN;
-const client = token ? new Client({ intents: [GatewayIntentBits.Guilds] }) : null;
+// GuildVoiceStates (não é privilegiada): saber em que call cada pessoa está.
+const client = token ? new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] }) : null;
 
 if (client) {
   client.once('clientReady', () => console.log(`Bot conectado como ${client.user.tag}`));
@@ -22,20 +23,20 @@ if (client) {
 
 const canPost = (channel) => channel.permissionsFor(channel.guild.members.me)?.has(NEEDED);
 
-// Servidores onde o bot está, com as calls em que ele pode mandar mensagem e criar convite.
-export function destinations() {
-  if (!client?.isReady()) return [];
-  return client.guilds.cache
-    .map((g) => ({
-      id: g.id,
-      name: g.name,
-      channels: g.channels.cache
-        .filter((c) => c.type === ChannelType.GuildVoice && canPost(c))
-        .sort((a, b) => a.rawPosition - b.rawPosition)
-        .map((c) => ({ id: c.id, name: c.name })),
-    }))
-    .filter((g) => g.channels.length)
-    .sort((a, b) => a.name.localeCompare(b.name));
+export const ready = () => !!client?.isReady();
+export const applicationId = () => client?.application?.id;
+
+// Quem é a pessoa no Discord: o apelido no servidor e a call em que ela está (servidor da call primeiro;
+// fora de call, o primeiro servidor onde ela está). null se ela não está em nenhum servidor do bot.
+export async function member(userId) {
+  if (!ready()) return null;
+  const guilds = [...client.guilds.cache.values()];
+  const inCall = guilds.find((g) => g.voiceStates.cache.get(userId)?.channelId);
+  for (const g of inCall ? [inCall, ...guilds] : guilds) {
+    const m = await g.members.fetch({ user: userId, force: true }).catch(() => null); // force: apelido atualizado
+    if (m) return { name: m.displayName, channel: m.voice.channel ?? null };
+  }
+  return null;
 }
 
 // Manda a mensagem no chat da call; devolve a mensagem (para editar quando a transmissão acabar) ou null.

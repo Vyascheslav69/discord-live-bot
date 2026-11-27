@@ -1,7 +1,8 @@
 // Relay das transmissões: recebe vídeo/áudio já codificados do laele viewer e repassa para quem assiste.
 // Protocolo binário (cada mensagem): [tipo u8][timestamp float64 LE, µs][dados]
 //   tipo 0 = vídeo quadro-chave, 1 = vídeo delta, 2 = áudio (Opus)
-// Texto (JSON): hello/ok/error na entrada do laele viewer e "config" (codecs) repassado aos espectadores.
+// Texto (JSON): hello/ok/error na entrada do laele viewer, "config" (codecs) repassado aos espectadores,
+// "viewers" (quantos assistem) para o laele viewer e "ping" (apontar na tela) entre espectadores.
 import { createServer } from 'node:http';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -36,6 +37,29 @@ if (!passwordLine) {
 }
 const passwordHash = sha(passwordLine);
 export const checkPassword = (p) => typeof p === 'string' && timingSafeEqual(sha(p), passwordHash);
+
+// O endereço do túnel é público: depois de 5 senhas erradas o IP fica 10 minutos sem poder tentar (nem com a certa).
+const MAX_FAILS = 5;
+const LOCK_MS = 10 * 60_000;
+const fails = new Map(); // ip -> { count, last }
+// O túnel e o Vite rodam nesta máquina: só nesse caso o IP vem do cabeçalho da Cloudflare (de fora ele seria forjável).
+const clientIp = (req) => {
+  const remote = req.socket.remoteAddress ?? '';
+  return (/^(::ffff:)?127\.|^::1$/.test(remote) && req.headers['cf-connecting-ip']) || remote;
+};
+// 'ok', 'senha' (errada) ou 'bloqueado' (errou demais).
+export function tryPassword(ip, password) {
+  const now = Date.now();
+  const f = fails.get(ip);
+  if (f && now - f.last > LOCK_MS) fails.delete(ip);
+  else if (f?.count >= MAX_FAILS) return 'bloqueado';
+  if (checkPassword(password)) return fails.delete(ip), 'ok';
+  if (fails.size > 10_000) for (const [k, v] of fails) if (now - v.last > LOCK_MS) fails.delete(k);
+  const count = (fails.get(ip)?.count ?? 0) + 1;
+  fails.set(ip, { count, last: now });
+  if (count === MAX_FAILS) console.log(`  ${ip} errou a senha ${MAX_FAILS} vezes: bloqueado por ${LOCK_MS / 60_000} min`);
+  return count >= MAX_FAILS ? 'bloqueado' : 'senha';
+}
 
 /* ---------- login com o Discord (OAuth2) ---------- */
 
@@ -107,11 +131,21 @@ export const sameName = (a, b) => {
 };
 const idOf = (name) => Buffer.from(name).toString('base64url');
 
-const streams = new Map(); // id -> { name, config, viewers: Set<WebSocket> }
+const streams = new Map(); // id -> { name, config, viewers: Set<WebSocket>, publisher, avatar }
 
 const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+// Quem transmite vê no laele viewer quantas pessoas estão assistindo.
+const sendViewers = (stream) => send(stream.publisher, { type: 'viewers', count: stream.viewers.size });
 
-function onPublish(ws) {
+// Foto do Discord de quem transmite, baixada uma vez e servida pelo relay (a atividade só acessa o próprio endereço).
+async function loadAvatar(stream, url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!r.ok) throw new Error(`foto: ${r.status}`);
+  const body = Buffer.from(await r.arrayBuffer());
+  if (body.length < 256 * 1024) stream.avatar = { type: r.headers.get('content-type') ?? 'image/png', body };
+}
+
+function onPublish(ws, ip) {
   let id = null;
   let stream = null;
   const helloTimer = setTimeout(() => ws.close(4001, 'sem hello'), 5000);
@@ -128,9 +162,11 @@ function onPublish(ws) {
       } catch {
         return ws.close(4002, 'hello inválido');
       }
-      if (!checkPassword(hello.password)) return send(ws, { type: 'error', code: 'senha' }), ws.close(4003, 'senha');
+      const pass = tryPassword(ip, hello.password);
+      if (pass !== 'ok') return send(ws, { type: 'error', code: pass }), ws.close(4003, pass);
       let name = String(hello.name ?? '').trim().slice(0, 32);
       let call = null;
+      let avatarUrl = null;
       if (discordLogin()) {
         // Com login do Discord o nome digitado não vale: ninguém transmite com o nome de outra pessoa.
         const userId = sessionUser(hello.session);
@@ -139,6 +175,7 @@ function onPublish(ws) {
         if (!who) return send(ws, { type: 'error', code: 'discord' }), ws.close(4003, 'fora dos servidores');
         name = who.name.trim().slice(0, 32);
         call = who.channel; // o bot sempre avisa na call em que a pessoa está
+        avatarUrl = who.avatar;
         if (ws.readyState !== ws.OPEN) return; // desistiu enquanto conferia
       }
       if (!name) return send(ws, { type: 'error', code: 'nome-vazio' }), ws.close(4002, 'nome');
@@ -146,9 +183,10 @@ function onPublish(ws) {
         return send(ws, { type: 'error', code: 'nome' }), ws.close(4009, 'nome em uso');
       }
       id = idOf(name);
-      stream = { name, config: null, viewers: new Set() };
+      stream = { name, config: null, viewers: new Set(), publisher: ws, avatar: null };
       streams.set(id, stream);
       console.log(`+ ${name} começou a transmitir`);
+      if (avatarUrl) loadAvatar(stream, avatarUrl).catch((e) => console.error(`  sem foto de ${name} (${e.message})`));
       // Aviso no Discord com o link da atividade, na call em que a pessoa está (login do Discord).
       stream.announcement = bot
         .announce(name, call?.guildId, call?.id)
@@ -205,16 +243,38 @@ function onWatch(ws, id) {
   if (!stream) return ws.close(4004, 'não encontrado');
   ws.needKey = true;
   stream.viewers.add(ws);
+  sendViewers(stream);
   if (stream.config) ws.send(stream.config);
-  ws.on('close', () => stream.viewers.delete(ws));
-  ws.on('message', () => {}); // espectadores não mandam nada
+  ws.on('close', () => {
+    stream.viewers.delete(ws);
+    sendViewers(stream);
+  });
+  // A única coisa que o espectador manda: apontar um ponto da tela (x, y de 0 a 1 sobre o vídeo), repassado a todos.
+  let lastPing = 0;
+  ws.on('message', (data, isBinary) => {
+    if (isBinary || data.length > 200 || Date.now() - lastPing < 150) return;
+    lastPing = Date.now();
+    let msg;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const { x, y, hue } = msg ?? {};
+    const ok = (n, max) => typeof n === 'number' && n >= 0 && n <= max;
+    if (msg?.type !== 'ping' || !ok(x, 1) || !ok(y, 1) || !Number.isInteger(hue) || !ok(hue, 359)) return;
+    const ping = JSON.stringify({ type: 'ping', x, y, hue });
+    for (const v of stream.viewers) if (v.readyState === v.OPEN) v.send(ping);
+  });
 }
 
 export const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/streams') {
     const tela = String(req.headers['x-tela'] ?? '');
     if (/^\d{1,5}x\d{1,5}( [a-z0-9-]{1,12})?$/.test(tela)) console.log(`  atividade: área de ${tela}`);
-    const list = [...streams].filter(([, s]) => s.config).map(([id, s]) => ({ id, name: s.name }));
+    const list = [...streams]
+      .filter(([, s]) => s.config)
+      .map(([id, s]) => ({ id, name: s.name, viewers: s.viewers.size, avatar: !!s.avatar }));
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(list));
   }
@@ -225,9 +285,12 @@ export const server = createServer((req, res) => {
     return res.end(JSON.stringify({ discord: discordLogin(), clientId: bot.applicationId() ?? null }));
   }
   if (req.method === 'POST' && url.pathname === '/auth/discord') return onDiscordCode(req, res);
+  const avatar = req.method === 'GET' && url.pathname.startsWith('/avatar/') && streams.get(url.pathname.slice(8))?.avatar;
+  if (avatar) return res.writeHead(200, { 'Content-Type': avatar.type, 'Cache-Control': 'private, max-age=300' }).end(avatar.body);
   // Nome no servidor do dono da sessão (só para quem tem a senha).
   if (req.method === 'GET' && url.pathname === '/me') {
-    if (!checkPassword((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return res.writeHead(401).end();
+    const pass = tryPassword(clientIp(req), (req.headers.authorization ?? '').replace(/^Bearer /, ''));
+    if (pass !== 'ok') return res.writeHead(pass === 'bloqueado' ? 429 : 401).end();
     const userId = sessionUser(req.headers['x-session']);
     if (!userId) return res.writeHead(403).end();
     return bot.member(userId).then((who) => {
@@ -267,7 +330,7 @@ server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, 'http://relay');
   const watch = pathname.match(/^\/ws\/watch\/([A-Za-z0-9_-]+)$/);
   if (pathname !== '/ws/publish' && !watch) return socket.destroy();
-  wss.handleUpgrade(req, socket, head, (ws) => (watch ? onWatch(ws, watch[1]) : onPublish(ws)));
+  wss.handleUpgrade(req, socket, head, (ws) => (watch ? onWatch(ws, watch[1]) : onPublish(ws, clientIp(req))));
 });
 
 server.listen(PORT, HOST, () => console.log(`Relay ouvindo em ${HOST}:${server.address().port}`));

@@ -134,6 +134,9 @@ h1 {
 #status { margin: 6px 0 0; color: var(--haze); min-height: 1.5em; }
 [data-state='live'] #status { color: var(--orchid); }
 [data-state='error'] #status { color: #ff9ec0; }
+.viewers { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; font-size: 14px; color: var(--lilac); }
+.viewers[hidden] { display: none; }
+.viewers svg { width: 16px; height: 16px; fill: none; stroke: var(--orchid); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 .field { display: grid; gap: 8px; align-content: start; min-height: 0; }
 .field > span { font-weight: 600; font-size: 14px; color: var(--haze); }

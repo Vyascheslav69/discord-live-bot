@@ -12,10 +12,19 @@
         <section class="slot" tabindex="0">
           <div class="screen">
             <canvas></canvas>
-            <p class="message"></p>
+            <div class="pings" aria-hidden="true"></div>
+            <p class="signal" role="status" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18h.01M9 18v-3M13 18v-6M17 18V9M21 18V6" /></svg>
+              <span>Conexão instável</span>
+            </p>
+            <div class="notice" hidden>
+              <span class="badge" aria-hidden="true"><span class="initial"></span></span>
+              <p class="title"></p>
+              <p class="sub"></p>
+            </div>
           </div>
           <div class="bar">
-            <span class="who"><span class="dot" aria-hidden="true"></span><span class="name"></span></span>
+            <span class="who"><span class="dot" aria-hidden="true"></span><span class="name"></span><span class="count"></span></span>
             <button class="mute" type="button" aria-label="Ativar som">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" /><path class="waves" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" /><path class="cross" d="M16 9l6 6M22 9l-6 6" /></svg>
             </button>

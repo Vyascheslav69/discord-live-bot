@@ -13,6 +13,7 @@ const shared = {
     // Mantém o Host público: o relay monta com ele o endereço de volta do login do Discord.
     '/auth/': { target: `http://${RELAY}`, changeOrigin: false },
     '/me': `http://${RELAY}`,
+    '/avatar/': `http://${RELAY}`,
   },
 };
 

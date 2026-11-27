@@ -253,6 +253,7 @@ function setState(state, text) {
   if (prev === 'live' && state !== 'live') beep(false); // stop() já desligou a captura de som
   app.dataset.state = state;
   statusEl.textContent = text;
+  $('viewers').hidden = state !== 'live';
   const busy = state === 'connecting' || state === 'live';
   $('edit').disabled = busy;
   // Ao vivo dá para trocar tela e qualidade; só durante a conexão fica travado.
@@ -466,6 +467,11 @@ async function start() {
   setState('connecting', 'Conectando ao servidor…');
   try {
     ws = await connect(server, name, password);
+    showViewers(0);
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'viewers') showViewers(msg.count);
+    };
     ws.onclose = (e) => {
       if (ws) log('erro', `conexão com o servidor caiu (código ${e.code}${e.reason ? `, ${e.reason}` : ''})`);
       if (!ws) return;
@@ -500,6 +506,7 @@ async function start() {
     log('erro', 'falha ao iniciar a transmissão:', err.stack ?? msg);
     stop();
     if (msg === 'senha') return showSetup('Senha errada. Confira com quem cuida do servidor.');
+    if (msg === 'bloqueado') return showSetup('Muitas senhas erradas seguidas. Espere 10 minutos e tente de novo.');
     if (msg === 'nome') {
       const who = settings().session ? me?.name ?? 'você' : name;
       return setState('error', `Já tem alguém transmitindo como ${who}.${settings().session ? '' : ' Troque seu nome em "Alterar endereço ou senha".'}`);
@@ -512,6 +519,10 @@ async function start() {
     if (msg === 'servidor') return setState('error', `Não achei o servidor em ${server}. Ele está ligado? O endereço do túnel mudou?`);
     setState('error', `Não deu para transmitir: ${msg}`);
   }
+}
+
+function showViewers(n) {
+  $('viewers-text').textContent = n === 0 ? 'Ninguém assistindo ainda' : n === 1 ? '1 pessoa assistindo' : `${n} pessoas assistindo`;
 }
 
 function fail(text) {

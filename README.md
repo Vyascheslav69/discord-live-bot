@@ -157,6 +157,7 @@ Clone o repositório no outro PC, instale Node.js e cloudflared e siga a seção
 ## Problemas comuns
 
 - **"Senha errada"**: confira `SENHA-TRANSMISSOR.txt` (e reinicie o relay se ela foi trocada).
+- **"Muitas senhas erradas seguidas"**: depois de 5 erros seguidos o relay bloqueia aquele IP por 10 minutos (nem a senha certa entra). Espere ou reinicie o relay.
 - **"Não achei o servidor"**: o túnel reiniciou e o endereço mudou, ou o relay/atividade não está rodando.
 - **"Este aparelho não consegue mostrar vídeo …"**: o navegador de quem assiste não decodifica o codec escolhido pelo laele viewer.
 - **Eco do Discord mesmo assim**: a exclusão vale para o app desktop do Discord. Discord aberto no navegador não é excluído.

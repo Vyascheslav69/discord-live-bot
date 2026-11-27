@@ -35,7 +35,7 @@ export async function member(userId) {
   const inCall = guilds.find((g) => g.voiceStates.cache.get(userId)?.channelId);
   for (const g of inCall ? [inCall, ...guilds] : guilds) {
     const m = await g.members.fetch({ user: userId, force: true }).catch(() => null); // force: apelido atualizado
-    if (m) return { name: m.displayName, channel: m.voice.channel ?? null };
+    if (m) return { name: m.displayName, channel: m.voice.channel ?? null, avatar: m.displayAvatarURL({ extension: 'png', size: 64, forceStatic: true }) };
   }
   return null;
 }

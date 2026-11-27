@@ -332,6 +332,7 @@ ipcMain.handle('discord-login', async (_, server, clientId) => {
 ipcMain.handle('me', async (_, server, password, session) => {
   const res = await fetch(new URL('/me', server), { headers: { Authorization: `Bearer ${password}`, 'X-Session': session } });
   if (res.status === 401) throw new Error('senha');
+  if (res.status === 429) throw new Error('bloqueado');
   if (res.status === 403) throw new Error('sessao');
   if (res.status === 404) throw new Error('discord');
   if (!res.ok) throw new Error(`servidor respondeu ${res.status}`);

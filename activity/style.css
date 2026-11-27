@@ -34,6 +34,11 @@ button { font: inherit; color: inherit; }
   transition: grid-template-columns 0.5s var(--ease), gap 0.5s var(--ease);
 }
 #stage[data-layout='2'] { grid-template-columns: 1fr 1fr; gap: 12px; }
+/* Uma tela só: o vídeo encosta nas bordas da atividade (sem margem, cantos ou borda) para usar cada pixel. */
+#stage[data-layout='1'] { padding: 0; }
+#stage[data-layout='1'] .screen,
+#stage[data-layout='1'] .bar { border-radius: 0; }
+#stage[data-layout='1'] .slot .screen { box-shadow: none; }
 
 /* Em telas mais altas que largas (celular, janela estreita), as duas telas empilham. */
 @media (max-aspect-ratio: 1 / 1) {

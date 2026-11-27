@@ -40,7 +40,12 @@ export async function member(userId) {
   return null;
 }
 
-// Manda a mensagem no chat da call; devolve a mensagem (para editar quando a transmissão acabar) ou null.
+// Avisos somem do chat depois de 2 minutos (o bot apaga as próprias mensagens; não precisa de permissão extra).
+// shortcut: o timer vive no processo; se o relay reiniciar antes, a mensagem fica. Para garantir, guardar e apagar ao iniciar.
+const NOTICE_TTL = 2 * 60_000;
+const temporary = (message) => setTimeout(() => message.delete().catch(() => {}), NOTICE_TTL);
+
+// Manda o aviso no chat da call; devolve a mensagem (o canal é usado no aviso de fim) ou null.
 export async function announce(name, guildId, channelId) {
   if (!client?.isReady() || !channelId) return null;
   const channel = client.channels.cache.get(channelId);
@@ -51,12 +56,15 @@ export async function announce(name, guildId, channelId) {
     maxAge: 0,
     unique: false,
   });
-  return channel.send({
+  const message = await channel.send({
     content: `🔴 **${escapeMarkdown(name)}** começou a transmitir. Clique para assistir: ${invite.url}`,
     allowedMentions: { parse: [] }, // um nome como "@everyone" não pinga ninguém
   });
+  temporary(message);
+  return message;
 }
 
 export async function finish(message, name) {
-  await message?.edit({ content: `⚫ ${escapeMarkdown(name)} parou de transmitir.`, allowedMentions: { parse: [] } });
+  if (!message) return;
+  temporary(await message.channel.send({ content: `⚫ ${escapeMarkdown(name)} parou de transmitir.`, allowedMentions: { parse: [] } }));
 }

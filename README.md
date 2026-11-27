@@ -5,7 +5,7 @@
                                                             ^ túnel Cloudflare (único endereço público)
 ```
 
-- `broadcaster/` — o **laele viewer**: app desktop para transmitir. Na primeira vez pede seu nome, o endereço do servidor e a senha, e guarda tudo para as próximas vezes. Você escolhe a tela ou janela e a qualidade (1080p/720p/480p, 30/60 fps), e transmite com o som do PC, **menos o som do Discord** (evita eco).
+- `broadcaster/` — o **laele viewer**: app desktop para transmitir. Na primeira vez pede seu nome, o endereço do servidor e a senha, e guarda tudo para as próximas vezes. Você escolhe a tela ou janela e a qualidade (1080p/720p/480p, 30/60 fps), e transmite com o som do PC, **menos o som do Discord** (evita eco). Dá para trocar a tela/janela e a qualidade durante a transmissão, sem desligar.
 - `server/` — o **relay** e o **bot**: recebe o vídeo já codificado de cada laele viewer e repassa para quem está assistindo. Confere a senha, não deixa dois nomes iguais e avisa no Discord quando alguém começa a transmitir.
 - `activity/` — a página que roda dentro do Discord. Mostra quem está transmitindo, troca de tela, mostra duas lado a lado, tem volume por tela e tela cheia (botão ou duplo clique).
 - `SENHA-TRANSMISSOR.txt` — a senha para transmitir (linha 2). **Não vai para o GitHub.** Num computador novo, copie `SENHA-TRANSMISSOR.example.txt` e troque a senha.
@@ -33,7 +33,7 @@
    - **Seu nome**: é o que aparece na atividade.
    - **Endereço do servidor**: no PC do servidor, `http://localhost:5173`. Nos outros, o endereço do túnel que o dono do servidor passar.
    - **Senha**: a de `SENHA-TRANSMISSOR.txt`, que o dono do servidor passa.
-4. Escolha a tela ou janela e a qualidade e clique em **Transmitir**. No canto superior direito aparecem o servidor e a call onde o bot vai avisar. Clique ali para trocar.
+4. Escolha a tela ou janela e a qualidade e clique em **Transmitir** (um bipe avisa quando liga e quando desliga). Dá para trocar as duas coisas com a transmissão no ar. No canto superior direito aparecem o servidor e a call onde o bot vai avisar. Clique ali para trocar.
 
 Para trocar nome, endereço ou senha depois, use "Alterar nome, endereço ou senha".
 
@@ -76,7 +76,7 @@ Para gerar só o do seu sistema: `cd broadcaster; npm i; npm run dist` (sai em `
    VITE_DISCORD_CLIENT_ID=seu_id_aqui
    ```
    Reinicie o `npm start` da atividade depois de criar o arquivo.
-3. **Activities → Settings**: ative **Enable Activities**. Se pedir, marque as plataformas (Desktop; Web/Mobile se quiser).
+3. **Activities → Settings**: ative **Enable Activities** e, em **Supported Platforms**, marque **Web**, **iOS** e **Android** além de Desktop (sem isso a atividade não aparece no celular).
 4. **Activities → URL Mappings**: em `/` (Root Mapping), coloque o host do túnel **sem** `https://`, ex.: `abc-def.trycloudflare.com`.
 5. **App Testers**: adicione seus amigos pelo nome de usuário. Eles precisam aceitar o convite (chega por e-mail ou DM). Enquanto o app não é verificado, só você e os testers conseguem abrir a atividade: é isso que a mantém privada.
 6. **Installation**: em *Installation Contexts* deixe **Guild Install**, copie o *Install Link*, abra-o e adicione o app ao seu servidor.

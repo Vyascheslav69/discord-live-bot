@@ -1,5 +1,5 @@
-const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, nativeImage, session, shell, systemPreferences } = require('electron');
-const { execFile } = require('child_process');
+const { app, BrowserWindow, Menu, Tray, desktopCapturer, ipcMain, nativeImage, screen, session, shell, systemPreferences } = require('electron');
+const { execFile, spawn } = require('child_process');
 const path = require('path');
 const { log, dir: logDir } = require('./log');
 
@@ -24,8 +24,8 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => showWindow());
 
-const WIDTH = 520;
-const HEIGHT = 720;
+const WIDTH = 580;
+const HEIGHT = 880;
 
 function showWindow() {
   if (!win) return;
@@ -58,14 +58,143 @@ function createTray() {
 app.on('before-quit', () => (quitting = true));
 app.on('activate', () => showWindow()); // Mac: clique no ícone do Dock
 
-ipcMain.handle('list-sources', async () =>
-  (await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } })).map((s) => ({
-    id: s.id,
-    name: s.name,
-    thumb: s.thumbnail.toDataURL(),
-  }))
-);
-ipcMain.handle('select-source', (_, id) => (selectedId = id));
+/* ---------- lista de telas e janelas ---------- */
+
+// desktopCapturer.getSources trava o processo principal (e a janela) por ~0,5 s a cada chamada e esconde janelas
+// minimizadas. No Windows a lista de janelas vem de um PowerShell fixo (processo à parte, ~10 ms) e o getSources só
+// roda quando aparece uma janela nova, para pegar as miniaturas.
+const thumbs = new Map(); // id -> miniatura (data URL)
+const noThumb = new Set(); // janelas que o getSources não devolve: não adianta pedir de novo
+let screens = [];
+let otherList = null;
+
+async function fetchSources() {
+  const list = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+  for (const s of list) thumbs.set(s.id, `data:image/jpeg;base64,${s.thumbnail.toJPEG(75).toString('base64')}`);
+  screens = list.filter((s) => s.id.startsWith('screen:')).map((s) => ({ id: s.id, name: s.name }));
+  return list;
+}
+
+const WIN_CS = String.raw`
+using System; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class LaeleWin {
+  delegate bool CB(IntPtr h, IntPtr p);
+  [DllImport("user32.dll")] static extern bool EnumWindows(CB cb, IntPtr p);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);
+  // Janelas que aparecem na barra de tarefas: visíveis, com título, sem dono, não "ferramenta" e não ocultas (cloaked).
+  public static string List() {
+    var o = new List<string>();
+    EnumWindows((h, p) => {
+      int cloaked;
+      if (!IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero || (GetWindowLong(h, -20) & 0x80) != 0) return true;
+      if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+      var s = new StringBuilder(512);
+      if (GetWindowText(h, s, 512) == 0) return true;
+      o.Add(h.ToInt64() + "\t" + (IsIconic(h) ? 1 : 0) + "\t" + s.ToString().Replace("\n", " "));
+      return true;
+    }, IntPtr.Zero);
+    return string.Join("\n", o);
+  }
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  // Restaura sem roubar o foco; "1" se estava minimizada. Alguns apps (o Discord) ignoram o ShowWindowAsync de
+  // outro processo, mas aceitam o "restaurar" do menu da janela (WM_SYSCOMMAND SC_RESTORE).
+  public static string Restore(long hwnd) {
+    var h = new IntPtr(hwnd);
+    if (!IsIconic(h)) return "0";
+    ShowWindowAsync(h, 4);
+    System.Threading.Thread.Sleep(150);
+    if (IsIconic(h)) PostMessage(h, 0x0112, new IntPtr(0xF120), IntPtr.Zero);
+    return "1";
+  }
+}`;
+
+let winHelper = null;
+let helperQueue = Promise.resolve();
+
+// Uma pergunta por vez ao PowerShell fixo; a resposta termina em <<fim>>.
+function askWindows(line) {
+  if (!winHelper) {
+    const script = [
+      '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
+      `Add-Type -TypeDefinition @'\n${WIN_CS}\n'@`,
+      'while ($null -ne ($l = [Console]::In.ReadLine())) {',
+      "  if ($l.StartsWith('restore ')) { [Console]::Out.Write([LaeleWin]::Restore([long]$l.Substring(8))) } else { [Console]::Out.Write([LaeleWin]::List()) }",
+      '  [Console]::Out.Write("`n<<fim>>`n"); [Console]::Out.Flush()',
+      '}',
+    ].join('\n');
+    const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true });
+    ps.stdout.setEncoding('utf8');
+    ps.on('error', (e) => log('aviso', 'PowerShell da lista de janelas:', e.message));
+    ps.on('exit', () => winHelper === ps && (winHelper = null));
+    winHelper = ps;
+  }
+  const ps = winHelper;
+  const answer = helperQueue.then(
+    () =>
+      new Promise((resolve, reject) => {
+        let buf = '';
+        const done = () => (clearTimeout(timer), ps.stdout.off('data', onData));
+        const onData = (d) => {
+          buf += d;
+          const end = buf.indexOf('<<fim>>');
+          if (end >= 0) done(), resolve(buf.slice(0, end).trim());
+        };
+        const timer = setTimeout(() => (done(), ps.kill(), reject(new Error('PowerShell não respondeu'))), 10000);
+        ps.stdout.on('data', onData);
+        ps.stdin.write(`${line}\n`);
+      })
+  );
+  helperQueue = answer.catch(() => {});
+  return answer;
+}
+
+async function listSourcesWindows() {
+  const out = await askWindows('list');
+  const wins = out
+    ? out.split('\n').map((line) => {
+        const [hwnd, minimized, ...title] = line.split('\t');
+        return { id: `window:${hwnd}:0`, name: title.join('\t'), minimized: minimized === '1' };
+      })
+    : [];
+  // Janela nova à vista e sem miniatura: um getSources (trava ~0,5 s, só nessa hora).
+  if (!screens.length || wins.some((w) => !w.minimized && !thumbs.has(w.id) && !noThumb.has(w.id))) {
+    const got = new Set((await fetchSources()).map((s) => s.id));
+    for (const w of wins) if (!w.minimized && !got.has(w.id)) noThumb.add(w.id);
+  }
+  return [...screens, ...wins];
+}
+
+// Mac/Linux: sem o PowerShell, o getSources roda de novo só quando a janela ganha foco.
+async function listSourcesOther() {
+  if (!otherList) otherList = (await fetchSources()).map((s) => ({ id: s.id, name: s.name }));
+  return otherList;
+}
+
+ipcMain.handle('list-sources', async () => {
+  let list;
+  try {
+    list = process.platform === 'win32' ? await listSourcesWindows() : await listSourcesOther();
+  } catch (e) {
+    log('aviso', 'lista de janelas pelo PowerShell falhou, usando a do Electron:', e.message);
+    list = await listSourcesOther();
+  }
+  // A própria janela do laele viewer fica fora da lista (compara o HWND: o id de mídia dela termina em :1, o da lista em :0).
+  const own = win && `window:${win.getMediaSourceId().split(':')[1]}:`;
+  return list.filter((s) => !own || !s.id.startsWith(own)).map((s) => ({ ...s, thumb: thumbs.get(s.id) }));
+});
+
+ipcMain.handle('select-source', async (_, id) => {
+  selectedId = id;
+  // Janela minimizada não pode ser capturada: restaura (sem roubar o foco) e espera a animação.
+  const hwnd = process.platform === 'win32' && id.match(/^window:(\d+):/)?.[1];
+  if (hwnd && (await askWindows(`restore ${hwnd}`)) === '1') await new Promise((r) => setTimeout(r, 400));
+});
 // Log vindo da página (estados, erros) e botão "Abrir logs".
 ipcMain.on('log', (_, level, message) => log(level, message));
 ipcMain.handle('open-logs', () => shell.openPath(logDir));
@@ -144,16 +273,16 @@ async function checkDiscord() {
 }
 
 ipcMain.handle('audio-start', async () => {
-  if (!capture) return { audio: false, discordFound: false };
+  if (!capture) return { audio: false };
   try {
     startCapture(await findDiscordRoot());
   } catch (e) {
     // Sem som é melhor do que sem transmissão.
     log('erro', 'não consegui iniciar a captura de som, seguindo só com vídeo:', e);
-    return { audio: false, discordFound: false };
+    return { audio: false };
   }
   watchTimer = setInterval(checkDiscord, 5000);
-  return { audio: true, discordFound: excludedPid !== null };
+  return { audio: true };
 });
 
 ipcMain.handle('audio-stop', () => {
@@ -164,14 +293,12 @@ ipcMain.handle('audio-stop', () => {
 });
 
 app.whenReady().then(() => {
-  session.defaultSession.setDisplayMediaRequestHandler(async (_, callback) => {
-    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-    callback({ video: sources.find((s) => s.id === selectedId) ?? sources[0] });
-  });
+  // Pelo id direto: sem getSources (que trava a janela) e funciona com a janela que acabou de sair do minimizado.
+  session.defaultSession.setDisplayMediaRequestHandler((_, callback) => callback({ video: { id: selectedId, name: selectedId } }));
 
   win = new BrowserWindow({
     width: WIDTH,
-    height: HEIGHT,
+    height: Math.min(HEIGHT, screen.getPrimaryDisplay().workAreaSize.height), // cabe em telas baixas (notebook 768p)
     // Tamanho fixo: sem redimensionar, maximizar ou tela cheia (F11 incluso).
     resizable: false,
     maximizable: false,
@@ -183,6 +310,7 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
   });
   win.loadFile('index.html');
+  win.on('focus', () => (otherList = null));
   createTray();
   win.on('close', (e) => {
     if (quitting) return;
@@ -201,5 +329,6 @@ app.whenReady().then(() => {
 // A janela só fecha de verdade ao sair pelo menu da bandeja (app.quit não emite window-all-closed).
 app.on('will-quit', () => {
   if (capturing) capture.stop();
+  winHelper?.kill();
   log('info', 'app fechado');
 });

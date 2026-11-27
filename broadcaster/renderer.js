@@ -22,6 +22,9 @@ let videoEncoder = null;
 let audioEncoder = null;
 let audioQueue = [];
 let audioTime = 0; // amostras (por canal) já enviadas
+let audioConfig;
+let audioInfo = {};
+let startedAt = 0;
 
 /* ---------- dados salvos ---------- */
 
@@ -169,9 +172,31 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------- fontes ---------- */
 
+let loadingSources = false;
+const sourceLabel = (s) => (s.minimized ? `${s.name} (minimizada)` : s.name);
+const setThumb = (img, thumb) => (thumb ? (img.src = thumb) : img.removeAttribute('src'));
+
 async function loadSources() {
-  const sources = await window.capture.listSources();
+  if (loadingSources) return;
+  loadingSources = true;
+  let sources;
+  try {
+    sources = await window.capture.listSources();
+  } finally {
+    loadingSources = false;
+  }
   if (!sources.some((s) => s.id === selectedId)) selectedId = sources[0]?.id ?? null;
+  // Mesma lista: só renova miniaturas e nomes (sem recriar os botões, o foco do teclado não se perde).
+  const buttons = [...sourcesEl.children];
+  if (buttons.length === sources.length && buttons.every((b, i) => b.dataset.id === sources[i].id)) {
+    sources.forEach((s, i) => {
+      buttons[i].title = s.name;
+      setThumb(buttons[i].querySelector('img'), s.thumb);
+      buttons[i].querySelector('span').textContent = sourceLabel(s);
+      buttons[i].setAttribute('aria-checked', s.id === selectedId);
+    });
+    return;
+  }
   sourcesEl.replaceChildren(
     ...sources.map((s) => {
       const b = document.createElement('button');
@@ -179,23 +204,32 @@ async function loadSources() {
       b.className = 'source';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', s.id === selectedId);
+      b.dataset.id = s.id;
+      b.disabled = app.dataset.state === 'connecting';
       b.title = s.name;
       const img = new Image();
-      img.src = s.thumb;
+      setThumb(img, s.thumb);
       img.alt = '';
       const label = document.createElement('span');
-      label.textContent = s.name;
+      label.textContent = sourceLabel(s);
       b.append(img, label);
       b.onclick = () => {
+        if (s.id === selectedId) return;
         selectedId = s.id;
         sourcesEl.querySelectorAll('.source').forEach((el) => el.setAttribute('aria-checked', el === b));
+        // Ao vivo: troca a captura sem derrubar a conexão.
+        liveChange(async () => {
+          await openSource();
+          await goLive();
+        });
       };
       return b;
     })
   );
 }
 
-$('refresh').onclick = loadSources;
+// Lista viva: atualiza a cada 1 s, só com a janela em primeiro plano.
+setInterval(() => !app.hidden && document.hasFocus() && loadSources(), 1000);
 
 /* ---------- qualidade ---------- */
 
@@ -213,6 +247,7 @@ for (const id of ['res', 'fps']) {
     b.onclick = () => {
       localStorage.setItem(id, b.dataset.value);
       renderQuality();
+      liveChange(goLive);
     };
   });
 }
@@ -220,15 +255,35 @@ renderQuality();
 
 /* ---------- estado ---------- */
 
+// Bipe curto ao ligar (sobe) e ao desligar (desce) a transmissão, sem arquivo de som.
+// Toca só com a captura de som desligada: ela exclui o Discord e não consegue excluir o app junto.
+const beepCtx = new AudioContext();
+function beep(up) {
+  const t = beepCtx.currentTime;
+  const osc = beepCtx.createOscillator();
+  const gain = beepCtx.createGain();
+  osc.frequency.setValueAtTime(up ? 660 : 880, t);
+  osc.frequency.setValueAtTime(up ? 880 : 660, t + 0.09);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.2, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  osc.connect(gain).connect(beepCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.21);
+}
+
 function setState(state, text) {
-  if (state !== app.dataset.state || state === 'error') log(state === 'error' ? 'erro' : 'info', `${state}: ${text}`);
+  const prev = app.dataset.state;
+  if (state !== prev || state === 'error') log(state === 'error' ? 'erro' : 'info', `${state}: ${text}`);
+  if (prev === 'live' && state !== 'live') beep(false); // stop() já desligou a captura de som
   app.dataset.state = state;
   statusEl.textContent = text;
   const busy = state === 'connecting' || state === 'live';
   $('edit').disabled = busy;
-  $('refresh').disabled = busy;
-  sourcesEl.querySelectorAll('button').forEach((b) => (b.disabled = busy));
-  document.querySelectorAll('.seg button').forEach((b) => (b.disabled = busy));
+  // Ao vivo dá para trocar tela e qualidade; só durante a conexão fica travado.
+  const connecting = state === 'connecting';
+  sourcesEl.querySelectorAll('button').forEach((b) => (b.disabled = connecting));
+  document.querySelectorAll('.seg button').forEach((b) => (b.disabled = connecting));
   toggleBtn.disabled = state === 'connecting';
   $('toggle-label').textContent = state === 'live' ? 'Parar transmissão' : state === 'connecting' ? 'Conectando…' : 'Transmitir';
   closeDest();
@@ -345,9 +400,94 @@ function pumpAudio(audioStart) {
 
 toggleBtn.onclick = () => (ws ? stop() : start());
 
+// Captura a tela/janela escolhida; numa troca ao vivo substitui a anterior.
+async function openSource() {
+  await window.capture.selectSource(selectedId);
+  const track = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: quality().fps }, audio: false })).getVideoTracks()[0];
+  if (!ws) return track.stop(); // parou enquanto abria
+  const old = captured;
+  captured = track;
+  if (old) {
+    old.onended = null;
+    old.stop();
+  }
+  // Se a janela capturada fechar, encerra a transmissão.
+  track.onended = () => stop();
+
+  // Com a tela parada o Chrome quase não manda quadros: guardamos o último e codificamos a quadros/s constantes.
+  const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+  (async () => {
+    for (;;) {
+      const { value, done } = await reader.read().catch(() => ({ done: true }));
+      if (done) return;
+      if (track !== captured) return value.close(); // captura trocada
+      lastFrame?.close();
+      lastFrame = value;
+    }
+  })();
+}
+
+// (Re)cria o codificador de vídeo para a captura e a qualidade atuais. Numa troca, a config nova faz quem assiste
+// recriar o decodificador e esperar o próximo quadro-chave; a conexão e o áudio seguem.
+async function goLive() {
+  const { res, fps: wantedFps } = quality();
+  await captured.applyConstraints({ frameRate: wantedFps }).catch(() => {});
+  const { width: cw = 1920, height: ch = 1080 } = captured.getSettings();
+  const [width, height] = fitSize(cw, ch, res);
+  const videoConfig = await pickVideoConfig(width, height, res, wantedFps);
+  if (!ws) return;
+  const fps = videoConfig.framerate;
+  const keyframeEvery = fps * 2; // quem entra no meio espera no máximo 2 s
+  log('info', `transmitindo para ${settings().server}: tela ${cw}x${ch} -> ${width}x${height} ${fps} fps, ${videoConfig.codec}, ${videoConfig.bitrate / 1e6} Mbps`);
+
+  clearInterval(pump);
+  // close() descarta o que o codificador antigo ainda tinha na fila (quadros do tamanho velho).
+  if (videoEncoder?.state === 'configured') videoEncoder.close();
+  videoEncoder = new VideoEncoder({
+    output: (chunk) => sendChunk(chunk.type === 'key' ? VIDEO_KEY : VIDEO_DELTA, chunk),
+    error: (e) => fail(`erro no vídeo: ${e.message}`),
+  });
+  videoEncoder.configure(videoConfig);
+  ws.send(JSON.stringify({ type: 'config', video: { codec: videoConfig.codec }, audio: audioConfig }));
+
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  let frameNo = 0;
+  pump = setInterval(() => {
+    if (audioEncoder) pumpAudio(startedAt);
+    if (!lastFrame) return;
+    // Codificador atrasado: pula este quadro em vez de acumular fila.
+    if (videoEncoder.encodeQueueSize > 2) return;
+    ctx.drawImage(lastFrame, 0, 0, width, height);
+    const frame = new VideoFrame(canvas, { timestamp: (performance.now() - startedAt) * 1000 });
+    const keyFrame = forceKey || frameNo++ % keyframeEvery === 0;
+    forceKey = false;
+    videoEncoder.encode(frame, { keyFrame });
+    frame.close();
+  }, 1000 / fps);
+
+  const parts = [`Ao vivo em ${height}p ${fps} fps.`];
+  if (fps < wantedFps) parts.push('Este PC não aguenta 60 fps, então ficou em 30.');
+  if (!audioInfo.hasAudio) parts.push('Sem som: no Mac vai só o vídeo.');
+  setState('live', parts.join(' '));
+}
+
+// Trocas ao vivo (tela, qualidade) uma de cada vez; se falhar, encerra com a mensagem de erro.
+let changing = Promise.resolve();
+function liveChange(fn) {
+  changing = changing.then(async () => {
+    if (app.dataset.state !== 'live') return;
+    try {
+      await fn();
+    } catch (err) {
+      log('erro', 'falha ao trocar durante a transmissão:', err.stack ?? err.message);
+      if (ws) fail(err.message);
+    }
+  });
+}
+
 async function start() {
   const { name, server, password } = settings();
-  const { res, fps: wantedFps } = quality();
   if (!selectedId) return setState('error', 'Escolha uma tela ou janela para mostrar.');
 
   setState('connecting', 'Conectando ao servidor…');
@@ -360,40 +500,15 @@ async function start() {
       setState('error', `A conexão com o servidor caiu. Ele ainda está ligado em ${server}?`);
     };
 
-    await window.capture.selectSource(selectedId);
-    captured = (await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: wantedFps }, audio: false })).getVideoTracks()[0];
-    // Se a janela capturada fechar, encerra a transmissão.
-    captured.onended = () => stop();
-
-    // Com a tela parada o Chrome quase não manda quadros: guardamos o último e codificamos a quadros/s constantes.
-    const reader = new MediaStreamTrackProcessor({ track: captured }).readable.getReader();
-    (async () => {
-      for (;;) {
-        const { value, done } = await reader.read().catch(() => ({ done: true }));
-        if (done) return;
-        lastFrame?.close();
-        lastFrame = value;
-      }
-    })();
-
-    const { width: cw = 1920, height: ch = 1080 } = captured.getSettings();
-    const [width, height] = fitSize(cw, ch, res);
-    const canvas = new OffscreenCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-
-    const videoConfig = await pickVideoConfig(width, height, res, wantedFps);
-    const fps = videoConfig.framerate;
-    const keyframeEvery = fps * 2; // quem entra no meio espera no máximo 2 s
-    log('info', `transmitindo para ${server}: tela ${cw}x${ch} -> ${width}x${height} ${fps} fps, ${videoConfig.codec}, ${videoConfig.bitrate / 1e6} Mbps`);
-    videoEncoder = new VideoEncoder({
-      output: (chunk) => sendChunk(chunk.type === 'key' ? VIDEO_KEY : VIDEO_DELTA, chunk),
-      error: (e) => fail(`erro no vídeo: ${e.message}`),
-    });
-    videoEncoder.configure(videoConfig);
+    await openSource();
+    if (!ws) return;
+    beep(true);
+    await new Promise((r) => setTimeout(r, 300)); // o bipe termina antes de a captura de som começar
 
     // No Mac não há captura de som: a transmissão vai só com vídeo (a config sai sem "audio").
-    const { audio: hasAudio, discordFound } = await window.capture.startAudio();
-    let audioConfig;
+    const { audio: hasAudio } = await window.capture.startAudio();
+    audioInfo = { hasAudio };
+    audioConfig = undefined;
     if (hasAudio) {
       audioEncoder = new AudioEncoder({
         output: (chunk) => sendChunk(AUDIO, chunk),
@@ -403,31 +518,10 @@ async function start() {
       audioEncoder.configure(audioConfig);
     }
 
-    ws.send(JSON.stringify({ type: 'config', video: { codec: videoConfig.codec }, audio: audioConfig }));
-
     audioQueue = [];
     audioTime = 0;
-    const start = performance.now();
-    let frameNo = 0;
-
-    pump = setInterval(() => {
-      if (audioEncoder) pumpAudio(start);
-      if (!lastFrame) return;
-      // Codificador atrasado: pula este quadro em vez de acumular fila.
-      if (videoEncoder.encodeQueueSize > 2) return;
-      ctx.drawImage(lastFrame, 0, 0, width, height);
-      const frame = new VideoFrame(canvas, { timestamp: (performance.now() - start) * 1000 });
-      const keyFrame = forceKey || frameNo++ % keyframeEvery === 0;
-      forceKey = false;
-      videoEncoder.encode(frame, { keyFrame });
-      frame.close();
-    }, 1000 / fps);
-
-    const parts = [`Ao vivo em ${height}p ${fps} fps.`];
-    if (fps < wantedFps) parts.push('Este PC não aguenta 60 fps, então ficou em 30.');
-    if (!hasAudio) parts.push('Sem som: no Mac vai só o vídeo.');
-    if (discordFound) parts.push('O som do Discord fica fora da transmissão.');
-    setState('live', parts.join(' '));
+    startedAt = performance.now();
+    await goLive();
   } catch (err) {
     const msg = err.message;
     log('erro', 'falha ao iniciar a transmissão:', err.stack ?? msg);

@@ -5,7 +5,7 @@ const RELAY = '127.0.0.1:8787'; // server/relay.js
 const shared = {
   port: 5173,
   strictPort: true,
-  allowedHosts: ['.trycloudflare.com'],
+  allowedHosts: ['.trycloudflare.com', 'live.laeleviewer.dpdns.org'],
   // Uma porta só para o túnel: a página, a lista de transmissões e os WebSockets do relay (assistir e transmitir).
   proxy: {
     '/ws/': { target: `ws://${RELAY}`, ws: true },

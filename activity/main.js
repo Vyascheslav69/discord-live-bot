@@ -139,9 +139,17 @@ let focused = 0;
 // Cor dos pontos que este espectador aponta na tela.
 const myHue = Math.floor(Math.random() * 360);
 
-// Foto do Discord no lugar da bolinha (sem foto, fica a bolinha).
+// Foto do Discord no lugar da bolinha, só depois que carregou (se falhar, fica a bolinha).
+// shortcut: uma falha não é tentada de novo até recarregar a atividade.
+const avatarLoaded = new Map(); // id -> true (carregou) | false (carregando ou falhou)
 function setAvatar(el, id) {
-  const has = !!info.get(id)?.avatar;
+  if (info.get(id)?.avatar && !avatarLoaded.has(id)) {
+    avatarLoaded.set(id, false);
+    const img = new Image();
+    img.onload = () => (avatarLoaded.set(id, true), updateInfo());
+    img.src = `/avatar/${id}`;
+  }
+  const has = !!info.get(id)?.avatar && avatarLoaded.get(id) === true;
   el.classList.toggle('has-avatar', has);
   el.style.backgroundImage = has ? `url(/avatar/${id})` : '';
 }

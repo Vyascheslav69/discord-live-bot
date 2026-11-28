@@ -1,7 +1,7 @@
 {
   "name": "laele-viewer",
   "productName": "laele viewer",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Transmite sua tela para a atividade do Discord",
   "private": true,
   "main": "main.js",

@@ -145,17 +145,26 @@ Function laelePageCreate
   ${NSD_FreeImage} $2
 FunctionEnd
 
+; Sempre numa subpasta com o nome do app: "C:\Jogos" vira "C:\Jogos\laele viewer" e "D:\" vira "D:\laele viewer"
+; (sem barra dupla: a raiz do disco já termina em "\").
+!macro laeleAppDir VAR
+  ${StrContains} $0 "${APP_FILENAME}" ${VAR}
+  ${If} $0 == ""
+    StrCpy $0 ${VAR} 1 -1
+    ${If} $0 == "\"
+      StrCpy ${VAR} ${VAR} -1
+    ${EndIf}
+    StrCpy ${VAR} "${VAR}\${APP_FILENAME}"
+  ${EndIf}
+!macroend
+
 Function laeleBrowse
   Pop $0
   ${NSD_GetText} $laeleDir $1
   nsDialogs::SelectFolderDialog "Escolha onde instalar o laele viewer" $1
   Pop $1
   ${If} $1 != error
-    ; sempre numa subpasta com o nome do app ("C:\Jogos" vira "C:\Jogos\laele viewer")
-    ${StrContains} $0 "${APP_FILENAME}" $1
-    ${If} $0 == ""
-      StrCpy $1 "$1\${APP_FILENAME}"
-    ${EndIf}
+    !insertmacro laeleAppDir $1
     ${NSD_SetText} $laeleDir $1
   ${EndIf}
 FunctionEnd
@@ -171,10 +180,7 @@ Function laelePageLeave
     MessageBox MB_ICONEXCLAMATION "Escolha uma pasta para instalar."
     Abort
   ${EndIf}
-  ${StrContains} $0 "${APP_FILENAME}" $INSTDIR
-  ${If} $0 == ""
-    StrCpy $INSTDIR "$INSTDIR\${APP_FILENAME}"
-  ${EndIf}
+  !insertmacro laeleAppDir $INSTDIR
 FunctionEnd
 
 ; ---------- progresso no tema: logo, "Instalando…" e barra roxa, no meio da janela ----------

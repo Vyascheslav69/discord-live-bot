@@ -230,7 +230,8 @@ ipcMain.handle('check-update', async () => {
   return { latest, newer: isNewer(latest, app.getVersion()) };
 });
 
-// Windows: baixa o instalador e abre (ele instala por cima). Mac/Linux: o download abre no navegador.
+// Windows: baixa o instalador e roda em silêncio (/S): instala por cima, sem tela, e reabre o app (--force-run).
+// Mac/Linux: o download abre no navegador.
 ipcMain.handle('install-update', async () => {
   const asset = release?.assets.find((a) => ASSET?.test(a.name));
   if (process.platform !== 'win32' || !asset) {
@@ -248,8 +249,8 @@ ipcMain.handle('install-update', async () => {
     if (pct !== shown) win?.webContents.send('update-progress', (shown = pct));
   });
   await pipeline(body, fs.createWriteStream(file));
-  log('info', `abrindo o instalador da versão ${release.tag_name}`);
-  spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
+  log('info', `instalando a versão ${release.tag_name} em silêncio`);
+  spawn(file, ['/S', '--updated', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
   app.quit(); // o instalador precisa do app fechado
 });
 // No Mac a captura de tela depende da permissão "Gravação de Tela" do sistema.

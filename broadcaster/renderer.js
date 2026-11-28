@@ -612,7 +612,9 @@ updateBtn.onclick = async () => {
     updateBtn.disabled = false;
   }
 };
-window.capture.onUpdateProgress((pct) => (updateStatus.textContent = `Baixando… ${pct}%`));
+window.capture.onUpdateProgress((pct) => {
+  updateStatus.textContent = pct < 100 ? `Baixando… ${pct}%` : 'Instalando… o laele viewer fecha e abre de novo sozinho.';
+});
 
 if (settings().password && (settings().session || settings().name)) showApp();
 else showSetup();

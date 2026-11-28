@@ -53,6 +53,19 @@ const VIDEO_OPTIONS = [{ optimizeForLatency: true }, {}, { hardwareAcceleration:
 const audioCtx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
 document.addEventListener('pointerdown', () => audioCtx.resume(), { capture: true });
 
+// Placa de vídeo que o Discord está usando ("SwiftShader" ou parecido = sem acesso à placa): vai para o log do relay
+// quando o aparelho não decodifica H.264.
+function gpuName() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    if (!gl) return 'sem WebGL';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+  } catch {
+    return 'desconhecida';
+  }
+}
+
 function playWS(slot, id, onDrop) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/watch/${id}`);
@@ -104,6 +117,7 @@ function playWS(slot, id, onDrop) {
   const cannotDecode = (reason) => {
     const codec = config.video.codec;
     if (!codec.startsWith('avc1')) return slot.showMessage(`Este aparelho não consegue mostrar vídeo ${codec} (${reason}).`);
+    report(`sem H.264: placa ${gpuName()}, ${where}, ${navigator.userAgent}`);
     send({ type: 'sem-h264' });
     slot.setNotice('loading', 'Ajustando o vídeo para este aparelho', 'Pedindo a quem transmite um formato que funcione aqui…', slot.path);
     switchTimer = setTimeout(() => {

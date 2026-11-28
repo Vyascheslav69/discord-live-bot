@@ -289,9 +289,11 @@ function sendChunk(kind, chunk) {
 
 // Primeiro codec suportado: H.264 nível 4.2 (aceleração por hardware na maioria dos PCs, até 1080p60), senão VP8.
 // Se o PC não aguenta 60 fps, cai para 30.
+// Alguém assistindo num Discord sem H.264 pediu (pelo relay): VP8 até o fim desta transmissão.
+let avoidH264 = false;
 async function pickVideoConfig(width, height, res, fps) {
   for (const framerate of fps === 60 ? [60, 30] : [30]) {
-    for (const codec of ['avc1.64002A', 'avc1.4D402A', 'avc1.42E02A', 'vp8']) {
+    for (const codec of avoidH264 ? ['vp8'] : ['avc1.64002A', 'avc1.4D402A', 'avc1.42E02A', 'vp8']) {
       const config = {
         codec,
         width,
@@ -443,6 +445,7 @@ async function goLive() {
   const parts = [`Ao vivo em ${height}p ${fps} fps.`];
   if (fps < wantedFps) parts.push('Este PC não aguenta 60 fps, então ficou em 30.');
   if (!audioInfo.hasAudio) parts.push('Sem som: no Mac vai só o vídeo.');
+  if (avoidH264) parts.push('Em VP8: alguém não consegue ver o formato normal.');
   setState('live', parts.join(' '));
 }
 
@@ -471,6 +474,11 @@ async function start() {
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === 'viewers') showViewers(msg.count);
+      if (msg.type === 'evitar-h264' && !avoidH264) {
+        log('info', 'alguém não consegue ver H.264: trocando para VP8');
+        avoidH264 = true;
+        liveChange(goLive);
+      }
     };
     ws.onclose = (e) => {
       if (ws) log('erro', `conexão com o servidor caiu (código ${e.code}${e.reason ? `, ${e.reason}` : ''})`);
@@ -544,6 +552,7 @@ function stop() {
   captured?.stop();
   captured = null;
   skipUntilKey = forceKey = false;
+  avoidH264 = false;
   setState('idle', 'Transmissão encerrada');
 }
 

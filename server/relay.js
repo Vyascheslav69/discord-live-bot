@@ -291,17 +291,33 @@ function onWatch(ws, id) {
     stream.viewers.delete(ws);
     sendViewers(stream);
   });
-  // A única coisa que o espectador manda: apontar um ponto da tela (x, y de 0 a 1 sobre o vídeo), repassado a todos.
+  // O espectador manda: apontar um ponto da tela (x, y de 0 a 1 sobre o vídeo), repassado a todos,
+  // e diagnóstico quando fica sem imagem (vai só para o log, no máximo 5 por espectador).
   let lastPing = 0;
+  let diags = 0;
   ws.on('message', (data, isBinary) => {
-    if (isBinary || data.length > 200 || Date.now() - lastPing < 150) return;
-    lastPing = Date.now();
+    if (isBinary || data.length > 800) return;
     let msg;
     try {
       msg = JSON.parse(data);
     } catch {
       return;
     }
+    if (msg?.type === 'diag' && typeof msg.text === 'string') {
+      if (++diags <= 5) console.log(`  espectador de ${stream.name}: ${msg.text.slice(0, 600)}`);
+      return;
+    }
+    // Este espectador não decodifica H.264 (Discord sem o codec): pede ao laele viewer para trocar para VP8.
+    if (msg?.type === 'sem-h264') {
+      if (stream.avc && !stream.askedVp8) {
+        stream.askedVp8 = true;
+        console.log(`  ${stream.name}: um espectador não consegue ver H.264, pedindo VP8`);
+        send(stream.publisher, { type: 'evitar-h264' });
+      }
+      return;
+    }
+    if (Date.now() - lastPing < 150) return;
+    lastPing = Date.now();
     const { x, y, hue } = msg ?? {};
     const ok = (n, max) => typeof n === 'number' && n >= 0 && n <= max;
     if (msg?.type !== 'ping' || !ok(x, 1) || !ok(y, 1) || !Number.isInteger(hue) || !ok(hue, 359)) return;

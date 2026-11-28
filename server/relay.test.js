@@ -67,6 +67,13 @@ juan.ws.send(frame(1, 4)); // delta depois do chave
 await new Promise((r) => setTimeout(r, 100));
 assert.deepEqual(got, [2, 3, 4]);
 
+// espectador sem H.264: o relay pede VP8 ao laele viewer (só com H.264 no ar, uma vez)
+juan.ws.send(JSON.stringify({ type: 'config', video: { codec: 'avc1.64002A' } }));
+await nextMsg(viewer);
+const asked = nextMsg(juan.ws);
+viewer.send(JSON.stringify({ type: 'sem-h264' }));
+assert.deepEqual(await asked, { type: 'evitar-h264' });
+
 // apontar na tela: repassado a todos os espectadores; fora de 0..1 é ignorado
 const pings = [];
 viewer.on('message', (d, bin) => !bin && pings.push(JSON.parse(d)));

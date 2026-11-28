@@ -45,6 +45,9 @@ function decodeName(id) {
 // por WebSocket (permitido pelo proxy do Discord) e é decodificado aqui. Protocolo em server/relay.js.
 const VIDEO_KEY = 0;
 const AUDIO = 2;
+// O Discord no PC às vezes diz que aceita H.264 e recusa ao configurar (sem decodificação por hardware):
+// tenta sem a opção de baixa latência e depois por software antes de desistir.
+const VIDEO_OPTIONS = [{ optimizeForLatency: true }, {}, { hardwareAcceleration: 'prefer-software' }];
 
 // Um AudioContext para a página; o navegador só libera o som depois de um clique.
 const audioCtx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });
@@ -60,6 +63,14 @@ function playWS(slot, id, onDrop) {
   let audio = null;
   let needKey = true;
   let stopped = false;
+  let option = 0; // índice em VIDEO_OPTIONS
+
+  let frames = 0;
+  let switchTimer = null;
+  // Recusas do decodificador vão para o log do relay (ajuda a entender aparelhos que não mostram vídeo).
+  const send = (msg) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+  const report = (text) => send({ type: 'diag', text });
+  const where = new URLSearchParams(location.search).get('platform') ?? 'navegador';
 
   const setupVideo = () => {
     video = new VideoDecoder({
@@ -70,16 +81,34 @@ function playWS(slot, id, onDrop) {
         }
         ctx.drawImage(frame, 0, 0);
         frame.close();
+        if (!frames++ && option > 0) report(`funcionou com ${JSON.stringify(VIDEO_OPTIONS[option])} (${where})`);
         slot.onFrame();
       },
-      // Decodificador quebrou (dado corrompido): recria e espera o próximo quadro-chave.
-      error: () => {
+      // Antes da primeira imagem, erro = o aparelho recusou esta configuração: tenta a próxima e, sem mais
+      // nenhuma, desiste (recriar sem parar travava o processador). Depois, erro = dado corrompido: recria.
+      error: (e) => {
         if (stopped) return;
+        if (!frames) {
+          report(`decodificador recusou ${config.video.codec} ${JSON.stringify(VIDEO_OPTIONS[option])} (${where}): ${e.message}`);
+          if (++option >= VIDEO_OPTIONS.length) return cannotDecode(e.message);
+        }
         needKey = true;
         setupVideo();
       },
     });
-    video.configure({ codec: config.video.codec, optimizeForLatency: true });
+    video.configure({ codec: config.video.codec, ...VIDEO_OPTIONS[option] });
+  };
+
+  // Nenhuma configuração serviu. H.264: pede VP8 a quem transmite (o laele viewer troca ao vivo e a config nova chega
+  // aqui); se não vier em 10 s (laele viewer antigo), desiste com a mensagem.
+  const cannotDecode = (reason) => {
+    const codec = config.video.codec;
+    if (!codec.startsWith('avc1')) return slot.showMessage(`Este aparelho não consegue mostrar vídeo ${codec} (${reason}).`);
+    send({ type: 'sem-h264' });
+    slot.setNotice('loading', 'Ajustando o vídeo para este aparelho', 'Pedindo a quem transmite um formato que funcione aqui…', slot.path);
+    switchTimer = setTimeout(() => {
+      slot.showMessage(`Este aparelho não consegue mostrar vídeo H.264. Quem transmite precisa atualizar o laele viewer.`);
+    }, 10_000);
   };
 
   const setupAudio = () => {
@@ -94,10 +123,16 @@ function playWS(slot, id, onDrop) {
       const msg = JSON.parse(e.data);
       if (msg.type === 'ping') return slot.showPing(msg.x, msg.y, msg.hue);
       config = msg;
+      clearTimeout(switchTimer);
       const ok = await VideoDecoder.isConfigSupported({ codec: config.video.codec });
-      if (!ok.supported) return slot.showMessage(`Este aparelho não consegue mostrar vídeo ${config.video.codec}.`);
+      if (!ok.supported) {
+        report(`codec ${config.video.codec} não suportado (${where}, ${navigator.userAgent})`);
+        return cannotDecode('não suportado');
+      }
       for (const d of [video, audio]) if (d && d.state !== 'closed') d.close();
       needKey = true;
+      option = 0;
+      frames = 0;
       setupVideo();
       setupAudio();
       return;
@@ -127,6 +162,7 @@ function playWS(slot, id, onDrop) {
     },
     stop() {
       stopped = true;
+      clearTimeout(switchTimer);
       ws.close();
       for (const d of [video, audio]) if (d && d.state !== 'closed') d.close();
     },
@@ -203,7 +239,7 @@ function createSlot(index) {
 
   slot.onFrame = () => {
     slot.lastFrameAt = performance.now();
-    if (el.classList.contains('live')) return;
+    if (el.classList.contains('live') && slot.notice.hidden) return; // com aviso na tela (ex.: troca de formato), limpa
     el.classList.remove('switching');
     el.classList.add('live');
     slot.dropped = false;

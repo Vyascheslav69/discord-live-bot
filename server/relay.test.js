@@ -13,7 +13,7 @@ writeFileSync(process.env.PASSWORD_FILE, 'Senha:\nsegredo\n');
 process.env.PORT = '0';
 process.env.DISCORD_BOT_TOKEN = ''; // teste sem conectar ao Discord
 process.env.DISCORD_CLIENT_SECRET = 'segredo-de-teste'; // assina as sessões (o login fica desligado sem o bot)
-const { server, makeSession, sessionUser, visibleIn } = await import('./relay.js');
+const { server, makeSession, sessionUser, visibleIn, completeKeyframe } = await import('./relay.js');
 await once(server, 'listening');
 const base = `ws://127.0.0.1:${server.address().port}`;
 
@@ -91,6 +91,16 @@ assert.equal(sessionUser(session), '123456789012345678');
 assert.equal(sessionUser(session.replace('123', '124')), null);
 assert.equal(sessionUser(`${session}x`), null);
 assert.equal(sessionUser(undefined), null);
+
+// H.264: quadro-chave sem SPS/PPS recebe os do último que tinha (depois do AUD)
+const nal = (type, ...rest) => [0, 0, 0, 1, type, ...rest];
+const msgOf = (...bytes) => Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, ...bytes]);
+const h264 = { name: 'x' };
+const full = msgOf(...nal(9, 0xf0), ...nal(0x67, 1, 2), ...nal(0x68, 3), ...nal(0x65, 4, 5));
+assert.equal(completeKeyframe(h264, full), full);
+const bare = msgOf(...nal(9, 0xf0), ...nal(0x65, 6));
+assert.deepEqual(completeKeyframe(h264, bare), msgOf(...nal(9, 0xf0), ...nal(0x67, 1, 2), ...nal(0x68, 3), ...nal(0x65, 6)));
+assert.equal(completeKeyframe({ name: 'y' }, bare), bare); // sem SPS guardado: passa como veio
 
 // fim da transmissão fecha o espectador e libera o nome
 juan.ws.close();

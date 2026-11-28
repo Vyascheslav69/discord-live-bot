@@ -149,6 +149,39 @@ async function loadAvatar(stream, url) {
   if (body.length < 256 * 1024) stream.avatar = { type: r.headers.get('content-type') ?? 'image/png', body };
 }
 
+// Codificadores H.264 por hardware às vezes só mandam SPS/PPS (a configuração do vídeo) no primeiro quadro-chave:
+// quem entra depois nunca consegue decodificar. O relay guarda os últimos e completa os quadros-chave que vierem sem.
+const START_CODE = Buffer.from([0, 0, 0, 1]);
+// Unidades NAL do começo do quadro (Annex B) até o primeiro pedaço de imagem: { type, at (código de início), start, end }.
+function leadingNals(data) {
+  const nals = [];
+  for (let i = 0; i + 3 < data.length; i++) {
+    if (data[i] || data[i + 1] || data[i + 2] !== 1) continue;
+    const at = i > 0 && data[i - 1] === 0 ? i - 1 : i;
+    if (nals.length) nals.at(-1).end = at;
+    const type = data[i + 3] & 0x1f;
+    nals.push({ type, at, start: i + 3, end: data.length });
+    if (type >= 1 && type <= 5) break;
+    i += 3;
+  }
+  return nals;
+}
+// Recebe a mensagem inteira ([tipo][timestamp][dados]) de um quadro-chave H.264 e devolve a mesma ou uma completada.
+export function completeKeyframe(stream, msg) {
+  const data = msg.subarray(9);
+  const nals = leadingNals(data);
+  const params = nals.filter((n) => n.type === 7 || n.type === 8);
+  if (params.some((n) => n.type === 7) && params.some((n) => n.type === 8)) {
+    stream.paramSets = Buffer.concat(params.flatMap((n) => [START_CODE, data.subarray(n.start, n.end)]));
+    return msg;
+  }
+  if (!stream.paramSets) return msg;
+  if (!stream.completing) console.log(`  ${stream.name}: quadros-chave sem SPS/PPS, o relay completa para quem entra depois`);
+  stream.completing = true;
+  const at = nals.find((n) => n.type !== 9)?.at ?? 0; // depois do delimitador de quadro (AUD), se houver
+  return Buffer.concat([msg.subarray(0, 9), data.subarray(0, at), stream.paramSets, data.subarray(at)]);
+}
+
 function onPublish(ws, ip) {
   let id = null;
   let stream = null;
@@ -211,6 +244,8 @@ function onPublish(ws, ip) {
       const msg = JSON.parse(data);
       if (msg.type === 'config') {
         stream.config = JSON.stringify(msg);
+        stream.avc = String(msg.video?.codec).startsWith('avc1');
+        stream.paramSets = null; // codificador novo: configuração nova
         for (const v of stream.viewers) {
           v.needKey = true;
           v.send(stream.config);
@@ -220,6 +255,7 @@ function onPublish(ws, ip) {
     }
 
     const kind = data[0];
+    if (kind === VIDEO_KEY && stream.avc) data = completeKeyframe(stream, data);
     for (const v of stream.viewers) {
       if (v.readyState !== v.OPEN) continue;
       if (kind !== AUDIO) {

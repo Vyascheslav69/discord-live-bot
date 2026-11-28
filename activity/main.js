@@ -548,6 +548,18 @@ setInterval(() => {
   }
 }, 500);
 
+// Versão nova publicada (o `npm start` recompila e o nome do script muda): recarrega sozinha a cada 30 s de checagem,
+// para ninguém ficar preso numa versão antiga. Em `npm run dev` o script é /main.js e nunca recarrega.
+const myScript = new URL(import.meta.url).pathname;
+setInterval(async () => {
+  try {
+    const html = await (await fetch('/', { cache: 'no-store' })).text();
+    if (html.includes('/assets/') && !html.includes(myScript)) location.reload();
+  } catch {
+    // servidor fora do ar: tenta na próxima
+  }
+}, 30_000);
+
 setFocus(0);
 renderChannels();
 poll();

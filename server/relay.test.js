@@ -13,7 +13,7 @@ writeFileSync(process.env.PASSWORD_FILE, 'Senha:\nsegredo\n');
 process.env.PORT = '0';
 process.env.DISCORD_BOT_TOKEN = ''; // teste sem conectar ao Discord
 process.env.DISCORD_CLIENT_SECRET = 'segredo-de-teste'; // assina as sessões (o login fica desligado sem o bot)
-const { server, makeSession, sessionUser } = await import('./relay.js');
+const { server, makeSession, sessionUser, visibleIn } = await import('./relay.js');
 await once(server, 'listening');
 const base = `ws://127.0.0.1:${server.address().port}`;
 
@@ -41,6 +41,14 @@ assert.equal((await publisher(' JULIA ')).reply.code, 'nome');
 // lista
 const list = await (await fetch(`http://127.0.0.1:${server.address().port}/streams`)).json();
 assert.deepEqual(list.map((s) => s.name), ['Júlia']);
+// sem login do Discord a transmissão não tem servidor: aparece em qualquer um
+const inGuild = await (await fetch(`http://127.0.0.1:${server.address().port}/streams?guild=123`)).json();
+assert.deepEqual(inGuild.map((s) => s.name), ['Júlia']);
+// com servidor: só no próprio (página fora do Discord vê todas)
+assert.equal(visibleIn({ guildId: '1' }, '1'), true);
+assert.equal(visibleIn({ guildId: '1' }, '2'), false);
+assert.equal(visibleIn({ guildId: '1' }, null), true);
+assert.equal(visibleIn({ guildId: null }, '2'), true);
 
 // espectador recebe config, ignora delta até chegar quadro-chave; quem transmite fica sabendo que tem 1 assistindo
 const countMsg = nextMsg(juan.ws);

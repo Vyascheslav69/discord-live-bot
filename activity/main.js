@@ -5,6 +5,8 @@ import '@fontsource-variable/figtree';
 // Modo em que o Discord mostra a atividade (em foco, janelinha ou quadrado da grade): vai para o log do relay com o tamanho.
 let layoutMode = '';
 let sizeSent = false;
+// Servidor do Discord onde a atividade foi aberta: a lista mostra só quem transmite dele (fora do Discord, todos).
+const guildId = new URLSearchParams(location.search).get('guild_id');
 
 // Fora do Discord (navegador comum) não há frame_id e o SDK lançaria erro.
 if (new URLSearchParams(location.search).has('frame_id')) {
@@ -450,7 +452,7 @@ async function poll() {
     // Ao abrir e a cada mudança: tamanho e modo de exibição vão para o log do relay (ajuda a acertar o layout).
     const headers = sizeSent ? {} : { 'X-Tela': `${innerWidth}x${innerHeight}${layoutMode && ` ${layoutMode}`}` };
     sizeSent = true;
-    const res = await fetch('/streams', { headers });
+    const res = await fetch(guildId ? `/streams?guild=${encodeURIComponent(guildId)}` : '/streams', { headers });
     const list = await res.json();
     info = new Map(list.map((s) => [s.id, s]));
     const next = list.map((s) => s.id).sort();

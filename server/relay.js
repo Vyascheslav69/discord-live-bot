@@ -130,6 +130,10 @@ export const sameName = (a, b) => {
   return norm(a) === norm(b);
 };
 const idOf = (name) => Buffer.from(name).toString('base64url');
+// Cada transmissão aparece só no servidor do Discord de quem transmite (o da call, senão o primeiro em que a pessoa está).
+// Sem servidor de um dos lados (nome digitado, ou página aberta fora do Discord) aparece para todos.
+// shortcut: é organização, não segurança; quem tem o endereço do túnel pode pedir a lista de outro servidor.
+export const visibleIn = (stream, guild) => !guild || !stream.guildId || stream.guildId === guild;
 
 const streams = new Map(); // id -> { name, config, viewers: Set<WebSocket>, publisher, avatar }
 
@@ -166,6 +170,7 @@ function onPublish(ws, ip) {
       if (pass !== 'ok') return send(ws, { type: 'error', code: pass }), ws.close(4003, pass);
       let name = String(hello.name ?? '').trim().slice(0, 32);
       let call = null;
+      let guildId = null;
       let avatarUrl = null;
       if (discordLogin()) {
         // Com login do Discord o nome digitado não vale: ninguém transmite com o nome de outra pessoa.
@@ -175,6 +180,7 @@ function onPublish(ws, ip) {
         if (!who) return send(ws, { type: 'error', code: 'discord' }), ws.close(4003, 'fora dos servidores');
         name = who.name.trim().slice(0, 32);
         call = who.channel; // o bot sempre avisa na call em que a pessoa está
+        guildId = call?.guildId ?? who.guildId;
         avatarUrl = who.avatar;
         if (ws.readyState !== ws.OPEN) return; // desistiu enquanto conferia
       }
@@ -183,7 +189,7 @@ function onPublish(ws, ip) {
         return send(ws, { type: 'error', code: 'nome' }), ws.close(4009, 'nome em uso');
       }
       id = idOf(name);
-      stream = { name, config: null, viewers: new Set(), publisher: ws, avatar: null };
+      stream = { name, guildId, config: null, viewers: new Set(), publisher: ws, avatar: null };
       streams.set(id, stream);
       console.log(`+ ${name} começou a transmitir`);
       if (avatarUrl) loadAvatar(stream, avatarUrl).catch((e) => console.error(`  sem foto de ${name} (${e.message})`));
@@ -269,17 +275,18 @@ function onWatch(ws, id) {
 }
 
 export const server = createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/streams') {
+  const url = new URL(req.url, 'http://relay');
+  if (req.method === 'GET' && url.pathname === '/streams') {
     const tela = String(req.headers['x-tela'] ?? '');
     if (/^\d{1,5}x\d{1,5}( [a-z0-9-]{1,12})?$/.test(tela)) console.log(`  atividade: área de ${tela}`);
+    const guild = /^\d{1,20}$/.test(url.searchParams.get('guild')) ? url.searchParams.get('guild') : null;
     const list = [...streams]
-      .filter(([, s]) => s.config)
+      .filter(([, s]) => s.config && visibleIn(s, guild))
       .map(([id, s]) => ({ id, name: s.name, viewers: s.viewers.size, avatar: !!s.avatar }));
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(list));
   }
   // Servidores/calls onde o bot pode avisar. Só para quem tem a senha (os nomes dos servidores não são públicos).
-  const url = new URL(req.url, 'http://relay');
   if (req.method === 'GET' && url.pathname === '/auth/config') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ discord: discordLogin(), clientId: bot.applicationId() ?? null }));

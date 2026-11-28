@@ -1,11 +1,13 @@
 ﻿; Instalador do laele viewer no tema do app: uma tela só (logo, pasta e botão Instalar) e o progresso no mesmo tema.
 ; Incluído pelo electron-builder (package.json → build.nsis.include). O desinstalador continua o padrão.
-; Atualizações rodam este mesmo instalador com /S (sem tela nenhuma) e ele reabre o app (--force-run).
+; Atualização (o app roda este instalador com --updated): em vez de nada ou do instalador, aparece só uma janelinha
+; "Atualizando o laele viewer…" no tema, como a do Discord, que fecha sozinha e reabre o app.
 
 !ifndef BUILD_UNINSTALLER
 
 !include nsDialogs.nsh
 !include StrContains.nsh
+!include FileFunc.nsh
 
 ; Cores do app (style.css). SetCtlColors usa RRGGBB; a barra de progresso usa COLORREF (BBGGRR).
 !define LAELE_BG 0x12081F
@@ -25,6 +27,7 @@ Var laeleInstall
 Var laeleFontTitle
 Var laeleFontText
 Var laeleFontStrong
+Var laeleUpdating ; "1" quando o app pediu a atualização (--updated)
 
 ; ---------- páginas (macros que o modelo do electron-builder chama) ----------
 
@@ -39,6 +42,18 @@ Var laeleFontStrong
 !macro customFinishPage
 !macroend
 
+; --updated: mostra a janelinha de atualização mesmo com /S (o app 1.5.2 ainda pede /S --updated --force-run).
+; Instalação silenciosa de verdade (só /S) continua sem tela.
+!macro customInit
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--updated" $R1
+  ${IfNot} ${Errors}
+    StrCpy $laeleUpdating "1"
+    SetSilent normal
+  ${EndIf}
+!macroend
+
 ; Sem a pergunta "para todos ou só para mim": instala para o usuário, como antes (perMachine: false).
 !macro customInstallMode
   StrCpy $isForceCurrentInstall "1"
@@ -48,7 +63,8 @@ Var laeleFontStrong
   ${IfNot} ${Silent}
     SetAutoClose true
     HideWindow ; senão a janela do app abre atrás do instalador
-    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" ""
+    ; pelo executável, não pelo atalho: na atualização os atalhos não são recriados e podem ter sido apagados
+    ${StdUtils.ExecShellAsUser} $0 "$appExe" "open" ""
   ${EndIf}
 !macroend
 
@@ -75,6 +91,19 @@ Function laeleGuiInit
   !insertmacro laeleHide 1
   !insertmacro laeleHide 2
   !insertmacro laeleHide 3
+  ${If} $laeleUpdating == "1"
+    ; janelinha de atualização: 320x340, sem barra de título, no meio da tela
+    System::Call "user32::GetWindowLong(p $HWNDPARENT, i -16) i .r0"
+    IntOp $0 $0 & 0xFF3FFFFF ; sem WS_CAPTION
+    System::Call "user32::SetWindowLong(p $HWNDPARENT, i -16, i r0)"
+    System::Call "user32::GetSystemMetrics(i 0) i .r1"
+    System::Call "user32::GetSystemMetrics(i 1) i .r2"
+    IntOp $1 $1 - 320
+    IntOp $1 $1 / 2
+    IntOp $2 $2 - 340
+    IntOp $2 $2 / 2
+    System::Call "user32::SetWindowPos(p $HWNDPARENT, p 0, i r1, i r2, i 320, i 340, i 0x24)"
+  ${EndIf}
   System::Call "*(i,i,i,i) p .r1"
   System::Call "user32::GetClientRect(p $HWNDPARENT, p r1)"
   System::Call "*$1(i, i, i .r2, i .r3)"
@@ -98,6 +127,9 @@ FunctionEnd
 ; ---------- tela única: logo, nome, pasta e Instalar ----------
 
 Function laelePageCreate
+  ${If} $laeleUpdating == "1"
+    Abort ; atualização: vai direto para o progresso, na mesma pasta
+  ${EndIf}
   !insertmacro laeleHide 3
   nsDialogs::Create 1018
   Pop $1
@@ -183,7 +215,7 @@ Function laelePageLeave
   !insertmacro laeleAppDir $INSTDIR
 FunctionEnd
 
-; ---------- progresso no tema: logo, "Instalando…" e barra roxa, no meio da janela ----------
+; ---------- progresso no tema: logo, título, barra em pílula e uma frase, centralizados na janela ----------
 
 Function laeleProgressShow
   ; o NSIS mostra os botões de novo a cada página
@@ -203,37 +235,60 @@ Function laeleProgressShow
   ShowWindow $0 ${SW_HIDE}
   GetDlgItem $0 $1 1027 ; botão "mostrar detalhes"
   ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $1 1006 ; texto do NSIS (fica vazio): no lugar dele vai um rótulo próprio
+  GetDlgItem $0 $1 1006 ; texto do NSIS (fica vazio): no lugar dele vão rótulos próprios
   ShowWindow $0 ${SW_HIDE}
 
-  ; logo (96 px) centralizada, acima do meio
-  IntOp $6 $5 / 2
-  IntOp $6 $6 - 130
+  ; bloco de 192 px no meio da janela: logo 96, título 26, barra 8 e frase 20, com respiros
+  IntOp $6 $5 - 192
+  IntOp $6 $6 / 2 ; topo do bloco
+
+  ; logo
   IntOp $9 $4 - 96
   IntOp $9 $9 / 2
   System::Call "user32::CreateWindowEx(i 0, w 'STATIC', w '', i 0x5000000E, i r9, i r6, i 96, i 96, p r1, p 0, p 0, p 0) p .r0"
   System::Call "user32::LoadImage(p 0, w '$PLUGINSDIR\laele-logo.bmp', i 0, i 0, i 0, i 0x10) p .r7"
   SendMessage $0 0x172 0 $7 ; STM_SETIMAGE
 
-  ; "Instalando…" centralizado (SS_CENTER | SS_CENTERIMAGE)
-  IntOp $6 $5 / 2
-  IntOp $6 $6 - 22
-  System::Call "user32::CreateWindowEx(i 0, w 'STATIC', w 'Instalando o laele viewer…', i 0x50000201, i 0, i r6, i r4, i 30, p r1, p 0, p 0, p 0) p .r0"
+  ; título
+  StrCpy $R2 "Instalando o laele viewer…"
+  StrCpy $R3 "Leva só alguns segundos"
+  ${If} $laeleUpdating == "1"
+    StrCpy $R2 "Atualizando o laele viewer…"
+    StrCpy $R3 "O app abre de novo sozinho"
+  ${EndIf}
+  IntOp $8 $6 + 112
+  System::Call "user32::CreateWindowEx(i 0, w 'STATIC', w R2, i 0x50000201, i 0, i r8, i r4, i 26, p r1, p 0, p 0, p 0) p .r0"
   SendMessage $0 ${WM_SETFONT} $laeleFontStrong 1
   SetCtlColors $0 ${LAELE_TEXT} transparent
 
-  ; barra: 70% da largura, sem o tema do Windows (senão ignora as cores)
+  ; frase pequena embaixo da barra
+  IntOp $8 $6 + 166
+  System::Call "user32::CreateWindowEx(i 0, w 'STATIC', w R3, i 0x50000201, i 0, i r8, i r4, i 20, p r1, p 0, p 0, p 0) p .r0"
+  SendMessage $0 ${WM_SETFONT} $laeleFontText 1
+  SetCtlColors $0 ${LAELE_HAZE} transparent
+
+  ; barra em pílula: sem o tema do Windows (senão ignora as cores), sem borda, preenchimento contínuo e cantos
+  ; arredondados recortados com uma região (o controle do Windows não tem cantos redondos)
   GetDlgItem $0 $1 1004
   System::Call "uxtheme::SetWindowTheme(p r0, w ' ', w ' ')"
+  System::Call "user32::GetWindowLong(p r0, i -16) i .r7"
+  IntOp $7 $7 & 0xFF7FFFFF ; sem WS_BORDER
+  IntOp $7 $7 | 1 ; PBS_SMOOTH
+  System::Call "user32::SetWindowLong(p r0, i -16, i r7)"
+  System::Call "user32::GetWindowLong(p r0, i -20) i .r7"
+  IntOp $7 $7 & 0xFFFDFDFF ; sem WS_EX_CLIENTEDGE e WS_EX_STATICEDGE
+  System::Call "user32::SetWindowLong(p r0, i -20, i r7)"
   SendMessage $0 0x409 0 ${LAELE_BAR_COLORREF} ; PBM_SETBARCOLOR
   SendMessage $0 0x2001 0 ${LAELE_TRACK_COLORREF} ; PBM_SETBKCOLOR
-  IntOp $6 $4 * 15
-  IntOp $6 $6 / 100
-  IntOp $7 $4 * 70
-  IntOp $7 $7 / 100
-  IntOp $8 $5 / 2
-  IntOp $8 $8 + 18
-  System::Call "user32::SetWindowPos(p r0, p 0, i r6, i r8, i r7, i 8, i 0x14)"
+  IntOp $9 $4 * 60
+  IntOp $9 $9 / 100 ; largura: 60% da janela
+  IntOp $3 $4 - $9
+  IntOp $3 $3 / 2 ; x centralizado
+  IntOp $8 $6 + 148
+  System::Call "user32::SetWindowPos(p r0, p 0, i r3, i r8, i r9, i 8, i 0x34)" ; 0x20: aplica a troca de borda
+  IntOp $7 $9 + 1
+  System::Call "gdi32::CreateRoundRectRgn(i 0, i 0, i r7, i 9, i 8, i 8) p .r7"
+  System::Call "user32::SetWindowRgn(p r0, p r7, i 1)"
 FunctionEnd
 
 !endif

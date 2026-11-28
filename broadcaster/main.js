@@ -230,7 +230,8 @@ ipcMain.handle('check-update', async () => {
   return { latest, newer: isNewer(latest, app.getVersion()) };
 });
 
-// Windows: baixa o instalador e roda em silêncio (/S): instala por cima, sem tela, e reabre o app (--force-run).
+// Windows: baixa o instalador e roda com --updated: o instalador mostra só a janelinha "Atualizando…" (não a tela de
+// instalação), instala na mesma pasta e reabre o app. O /S fica pelos instaladores antigos, que não conhecem a janelinha.
 // Mac/Linux: o download abre no navegador.
 ipcMain.handle('install-update', async () => {
   const asset = release?.assets.find((a) => ASSET?.test(a.name));

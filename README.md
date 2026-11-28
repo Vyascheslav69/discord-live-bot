@@ -40,7 +40,7 @@
 
 Para trocar endereço, senha ou conta depois, use "Alterar endereço, senha ou conta".
 
-**Atualizar**: o ícone ⓘ ao lado do nome, na barra do app, mostra a versão instalada e procura uma mais nova nas Releases (um ponto aceso no ícone avisa que tem). No Windows, **Atualizar** baixa a versão nova e instala em silêncio, na mesma pasta: o app fecha e abre de novo sozinho, sem tela de instalador. No Mac e no Linux, o download abre no navegador.
+**Atualizar**: o ícone ⓘ ao lado do nome, na barra do app, mostra a versão instalada e procura uma mais nova nas Releases (um ponto aceso no ícone avisa que tem). No Windows, **Atualizar** baixa a versão nova e mostra só uma janelinha "Atualizando o laele viewer…" (sem a tela do instalador), na mesma pasta; no fim o app abre de novo sozinho. No Mac e no Linux, o download abre no navegador.
 
 ### Log (para entender erros em outros computadores)
 

@@ -304,7 +304,8 @@ function onWatch(ws, id) {
       return;
     }
     if (msg?.type === 'diag' && typeof msg.text === 'string') {
-      if (++diags <= 5) console.log(`  espectador de ${stream.name}: ${msg.text.slice(0, 600)}`);
+      // Sem caracteres de controle: quem assiste não consegue forjar linhas no log.
+      if (++diags <= 5) console.log(`  espectador de ${stream.name}: ${msg.text.slice(0, 600).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')}`);
       return;
     }
     // Este espectador não decodifica H.264 (Discord sem o codec): pede ao laele viewer para trocar para VP8.
